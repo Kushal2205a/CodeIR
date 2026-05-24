@@ -68,6 +68,7 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
+    "axios": "^1.16.1",
     "tree-sitter": "^0.21.1",
     "tree-sitter-cpp": "^0.23.4"
   }
