@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src vscode-resource: 'unsafe-inline'; script-src 'nonce-{{NONCE}}';" />
+    <link rel="stylesheet" href="{{CSS_URI}}" />
+    <title>LearnToVibe — Practice</title>
+</head>
+
+<body>
+
+    <div class="shell">
+
+        <div class="progress-sidebar">
+            <div class="ps-header">
+                <div class="sidebar-title">Blocks</div>
+                <div class="sidebar-filename" id="ps-fn-name">—</div>
+            </div>
+            <div class="block-list" id="block-list"></div>
+            <div class="ps-score">
+                <div class="score-label">Completed</div>
+                <div class="score-val" id="score-val">0 / 0</div>
+            </div>
+        </div>
+
+        <div class="main">
+            <div class="topbar">
+                <div class="topbar-label">Reconstruct the function</div>
+                <div class="block-counter" id="block-counter">—</div>
+            </div>
+
+            <div class="practice-scroll" id="practice-scroll"></div>
+        </div>
+
+    </div>
+
+    <script nonce="{{NONCE}}">
+        const vscode = acquireVsCodeApi();
+
+        vscode.postMessage({ type: 'ready' });
+
+        // ── state ─────────────────────────────────────────────────
+        let blocks = [];
+        let completedIds = new Set();
+        let activeBlockId = null;
+
+        // ── DOM refs ──────────────────────────────────────────────
+        const psFnName = document.getElementById('ps-fn-name');
+        const blockList = document.getElementById('block-list');
+        const scoreVal = document.getElementById('score-val');
+        const blockCounter = document.getElementById('block-counter');
+        const practiceScroll = document.getElementById('practice-scroll');
+
+        // ── render sidebar ────────────────────────────────────────
+        function renderSidebar() {
+            blockList.innerHTML = '';
+            blocks.forEach(block => {
+                const done = completedIds.has(block.id);
+                const active = block.id === activeBlockId;
+
+                const item = document.createElement('div');
+                item.className = 'block-nav-item';
+                item.id = `nav-${block.id}`;
+                item.innerHTML = `
+          <div class="bni-dot ${done ? 'done' : active ? 'active' : ''}">
+            ${done ? '✓' : block.id}
+          </div>
+          <span class="bni-label ${done ? 'done' : active ? 'active' : ''}">
+            ${truncate(block.instruction, 28)}
+          </span>
+        `;
+                blockList.appendChild(item);
+            });
+
+            scoreVal.textContent = `${completedIds.size} / ${blocks.length}`;
+            blockCounter.textContent = `Block ${activeBlockId} of ${blocks.length}`;
+        }
+
+        // ── render blocks ─────────────────────────────────────────
+        function renderBlocks() {
+            practiceScroll.innerHTML = '';
+
+            blocks.forEach(block => {
+                const done = completedIds.has(block.id);
+                const active = block.id === activeBlockId;
+                const locked = !done && !active;
+
+                const card = document.createElement('div');
+                card.className = `block-card ${done ? 'success' : active ? 'active' : ''}`;
+                card.id = `block-${block.id}`;
+
+                if (done) {
+                    card.innerHTML = `
+            <div class="block-header">
+              <span class="block-num">BLOCK ${block.id}</span>
+              <span class="block-instruction">${block.instruction}</span>
+            </div>
+            <div class="block-body">
+              <div class="code-done">${escapeHtml(block.code)}</div>
+              <div class="success-row">✓ Correct</div>
+            </div>
+          `;
+                } else if (active) {
+                    card.innerHTML = `
+            <div class="block-header">
+              <span class="block-num">BLOCK ${block.id}</span>
+              <span class="block-instruction">${block.instruction}</span>
+            </div>
+            <div class="block-body">
+              <textarea
+                class="code-area"
+                id="textarea-${block.id}"
+                placeholder="Write the code here..."
+                spellcheck="false"
+              ></textarea>
+              <div class="hint-box" id="hint-box-${block.id}" style="display:none;"></div>
+              <div class="error-row" id="error-row-${block.id}" style="display:none;">
+                Not quite — try again.
+              </div>
+              <div class="block-actions">
+                <button class="check-btn" id="check-btn-${block.id}">Check</button>
+                <button class="hint-btn"  id="hint-btn-${block.id}">Hint</button>
+              </div>
+            </div>
+          `;
+
+                    // bind events after render
+                    setTimeout(() => {
+                        const textarea = document.getElementById(`textarea-${block.id}`);
+                        const checkBtn = document.getElementById(`check-btn-${block.id}`);
+                        const hintBtn = document.getElementById(`hint-btn-${block.id}`);
+
+                        checkBtn.addEventListener('click', () => {
+                            vscode.postMessage({
+                                type: 'check',
+                                blockId: block.id,
+                                userInput: textarea.value,
+                            });
+                        });
+
+                        textarea.addEventListener('keydown', (e) => {
+                            if (e.key === 'Enter' && e.ctrlKey) {
+                                vscode.postMessage({
+                                    type: 'check',
+                                    blockId: block.id,
+                                    userInput: textarea.value,
+                                });
+                            }
+                        });
+
+                        hintBtn.addEventListener('click', () => {
+                            vscode.postMessage({ type: 'hint', blockId: block.id });
+                        });
+
+                        textarea.focus();
+                    }, 50);
+
+                } else {
+                    card.classList.add('locked-block');
+                    card.innerHTML = `
+            <div class="block-header">
+              <span class="block-num">BLOCK ${block.id}</span>
+              <span class="block-instruction">${block.instruction}</span>
+            </div>
+            <div class="block-body">
+              <textarea
+                class="code-area"
+                placeholder="Complete the previous block first..."
+                disabled
+              ></textarea>
+            </div>
+          `;
+                }
+
+                practiceScroll.appendChild(card);
+            });
+        }
+
+        // ── message handler ───────────────────────────────────────
+        window.addEventListener('message', (event) => {
+            const msg = event.data;
+
+            switch (msg.type) {
+
+                case 'init':
+                    blocks = msg.blocks;
+                    activeBlockId = blocks[0]?.id ?? null;
+                    psFnName.textContent = msg.functionName;
+                    renderBlocks();
+                    renderSidebar();
+                    break;
+
+                case 'checkResult':
+                    if (msg.correct) {
+                        completedIds.add(msg.blockId);
+                        activeBlockId = msg.next ?? msg.blockId;
+
+                        renderBlocks();
+                        renderSidebar();
+
+                        // scroll to next block
+                        if (msg.next) {
+                            setTimeout(() => {
+                                const el = document.getElementById(`block-${msg.next}`);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }, 100);
+                        } else {
+                            vscode.postMessage({ type: 'complete' });
+                        }
+                    } else {
+                        const errorRow = document.getElementById(`error-row-${msg.blockId}`);
+                        if (errorRow) {
+                            errorRow.style.display = 'flex';
+                            setTimeout(() => {
+                                errorRow.style.display = 'none';
+                            }, 2000);
+                        }
+                    }
+                    break;
+
+                case 'hint': {
+                    const hintBox = document.getElementById(`hint-box-${msg.blockId}`);
+                    const hintBtn = document.getElementById(`hint-btn-${msg.blockId}`);
+                    if (hintBox) {
+                        hintBox.textContent = msg.text;
+                        hintBox.style.display = 'block';
+                    }
+                    if (hintBtn && msg.hintsUsed >= msg.maxHints) {
+                        hintBtn.disabled = true;
+                        hintBtn.textContent = 'No more hints';
+                    }
+                    break;
+                }
+            }
+        });
+
+        // ── utils ─────────────────────────────────────────────────
+        function escapeHtml(str) {
+            return str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function truncate(str, max) {
+            return str.length > max ? str.slice(0, max) + '…' : str;
+        }
+    </script>
+
+</body>
+
+</html>
