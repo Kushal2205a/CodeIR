@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src vscode-resource: 'unsafe-inline'; script-src 'nonce-{{NONCE}}';" />
+    <link rel="stylesheet" href="{{CSS_URI}}" />
+    <title>LearnToVibe — Understand</title>
+</head>
+
+<body>
+
+    <div class="shell">
+
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Functions</div>
+                <div class="sidebar-filename" id="filename">—</div>
+            </div>
+            <div class="fn-list" id="fn-list"></div>
+        </div>
+
+        <div class="main">
+            <div class="topbar">
+                <div class="topbar-label" id="topbar-label">—</div>
+                <button class="done-btn" id="done-btn">
+                    Practice this function ›
+                </button>
+            </div>
+
+            <div class="content-area">
+
+                <div class="explanation-scroll" id="explanation-scroll">
+
+                    <div id="loading-state" class="state-box" style="display:none;">
+                        <div class="spinner"></div>
+                        <span>Analysing function...</span>
+                    </div>
+
+                    <div id="error-state" class="state-box error" style="display:none;">
+                        <span id="error-text"></span>
+                        <button id="retry-btn" class="done-btn" style="margin-top:8px;">Retry</button>
+                    </div>
+
+                    <div id="generating-state" class="state-box" style="display:none;">
+                        <div class="spinner"></div>
+                        <span>Generating practice blocks...</span>
+                    </div>
+
+                    <div id="explanation-content" style="display:none;">
+                        <div class="exp-fn-name" id="exp-fn-name"></div>
+                        <div class="exp-fn-sig" id="exp-fn-sig"></div>
+                        <div class="exp-body" id="exp-body"></div>
+                        <div class="exp-tags" id="exp-tags"></div>
+                        <div class="divider"></div>
+                        <div class="call-info" id="call-info"></div>
+                    </div>
+
+                </div>
+
+                <div class="chat-section">
+                    <div class="chat-messages" id="chat-messages"></div>
+                    <div class="chat-input-row">
+                        <input class="chat-input" id="chat-input" type="text"
+                            placeholder="Ask about this function..." />
+                        <button class="send-btn" id="send-btn">›</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+    <script nonce="{{NONCE}}">
+        const vscode = acquireVsCodeApi();
+
+        // notify extension that webview is ready
+        vscode.postMessage({ type: 'ready' });
+
+        // ── DOM refs ──────────────────────────────────────────────
+        const fnList = document.getElementById('fn-list');
+        const topbarLabel = document.getElementById('topbar-label');
+        const loadingState = document.getElementById('loading-state');
+        const errorState = document.getElementById('error-state');
+        const errorText = document.getElementById('error-text');
+        const generatingState = document.getElementById('generating-state');
+        const expContent = document.getElementById('explanation-content');
+        const expFnName = document.getElementById('exp-fn-name');
+        const expFnSig = document.getElementById('exp-fn-sig');
+        const expBody = document.getElementById('exp-body');
+        const expTags = document.getElementById('exp-tags');
+        const callInfo = document.getElementById('call-info');
+        const chatMessages = document.getElementById('chat-messages');
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        const doneBtn = document.getElementById('done-btn');
+
+        // ── state ─────────────────────────────────────────────────
+        let activeIndex = 0;
+
+        // ── helpers ───────────────────────────────────────────────
+        function showOnly(el) {
+            [loadingState, errorState, generatingState, expContent].forEach(e => {
+                e.style.display = 'none';
+            });
+            if (el) el.style.display = 'flex';
+        }
+
+        function appendChat(text, role) {
+            const div = document.createElement('div');
+            div.className = `chat-msg ${role}`;
+            div.textContent = text;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function renderFnList(functions, active) {
+            fnList.innerHTML = '';
+            functions.forEach((fn, i) => {
+                const item = document.createElement('div');
+                item.className = 'fn-item' + (i === active ? ' active' : '');
+                item.innerHTML = `
+          <span class="fn-name-text">${fn.name}</span>
+          <span class="fn-type">${fn.nodeType}</span>
+        `;
+                item.addEventListener('click', () => {
+                    vscode.postMessage({ type: 'selectFunction', index: i });
+                });
+                fnList.appendChild(item);
+            });
+        }
+
+        document.getElementById('retry-btn').addEventListener('click', () => {
+            vscode.postMessage({ type: 'selectFunction', index: activeIndex });
+        });
+
+        // ── message handler ───────────────────────────────────────
+        window.addEventListener('message', (event) => {
+            const msg = event.data;
+
+            switch (msg.type) {
+
+                case 'init':
+                    renderFnList(msg.functions, msg.activeIndex);
+                    activeIndex = msg.activeIndex;
+                    break;
+
+                case 'loading':
+                    topbarLabel.textContent = msg.functionName;
+                    showOnly(loadingState);
+                    chatMessages.innerHTML = '';
+                    break;
+
+                case 'explanation': {
+                    const e = msg.explanation;
+                    topbarLabel.textContent = e.functionName;
+                    expFnName.textContent = e.functionName;
+                    expFnSig.textContent = '';
+                    expBody.textContent = e.explanation;
+
+                    expTags.innerHTML = (e.concepts || [])
+                        .map(c => `<span class="tag">${c}</span>`)
+                        .join('');
+
+                    callInfo.textContent = e.callInfo || '';
+
+                    showOnly(null);
+                    expContent.style.display = 'block';
+                    break;
+                }
+
+                case 'generatingPractice':
+                    showOnly(generatingState);
+                    break;
+
+                case 'error':
+                    errorText.textContent = msg.message;
+                    showOnly(errorState);
+                    break;
+
+                case 'chatReply':
+                    appendChat(msg.text, 'ai');
+                    break;
+
+                case 'doneComplete':
+                    showOnly(null);
+                    expContent.style.display = 'block';
+                    break;
+            }
+        });
+
+        // ── chat ──────────────────────────────────────────────────
+        function sendChat() {
+            const text = chatInput.value.trim();
+            if (!text) return;
+            appendChat(text, 'user');
+            chatInput.value = '';
+            vscode.postMessage({ type: 'chat', text });
+        }
+
+        sendBtn.addEventListener('click', sendChat);
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendChat();
+        });
+
+        // ── done ──────────────────────────────────────────────────
+        doneBtn.addEventListener('click', () => {
+            vscode.postMessage({ type: 'done' });
+        });
+    </script>
+
+</body>
+
+</html>
