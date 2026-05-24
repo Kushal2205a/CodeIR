@@ -11,7 +11,9 @@
   ],
   "activationEvents": [
     "onLanguage:typescript",
+    "onLanguage:typescriptreact",
     "onLanguage:javascript",
+    "onLanguage:javascriptreact",
     "onLanguage:python",
     "onLanguage:go"
   ],
@@ -20,28 +22,72 @@
     "commands": [
       {
         "command": "learntovibe.learnFunction",
-        "title": "Learn this function"
+        "title": "Learn this function",
+        "category": "LearnToVibe"
       },
       {
         "command": "learntovibe.practiceFunction",
-        "title": "Practice this function"
+        "title": "Practice this function",
+        "category": "LearnToVibe"
       }
     ],
     "menus": {
       "editor/context": [
         {
           "command": "learntovibe.learnFunction",
-          "when": "editorLangId in learntovibe.supportedLanguages"
+          "when": "editorLangId in learntovibe.supportedLanguages",
+          "group": "learntovibe@1"
+        },
+        {
+          "command": "learntovibe.practiceFunction",
+          "when": "editorLangId in learntovibe.supportedLanguages",
+          "group": "learntovibe@2"
         }
       ]
     },
     "keybindings": [
       {
         "command": "learntovibe.learnFunction",
-        "key": "ctrl+shift+1",
-        "mac": "cmd+shift+l"
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "learntovibe.practiceFunction",
+        "key": "ctrl+shift+p",
+        "mac": "cmd+shift+p",
+        "when": "editorTextFocus"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "LearnToVibe",
+      "properties": {
+        "learntovibe.apiProvider": {
+          "type": "string",
+          "enum": [
+            "nvidia",
+            "ollama"
+          ],
+          "default": "nvidia",
+          "description": "AI provider to use for explanations and practice generation."
+        },
+        "learntovibe.nvidiaApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your NVIDIA API key for Kimi K2.6."
+        },
+        "learntovibe.ollamaBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Base URL for your Ollama instance."
+        },
+        "learntovibe.ollamaModel": {
+          "type": "string",
+          "default": "llama3",
+          "description": "Ollama model name to use (e.g. llama3, mistral, codellama)."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -69,7 +115,12 @@
   },
   "dependencies": {
     "axios": "^1.16.1",
+    "dotenv": "^17.4.2",
     "tree-sitter": "^0.21.1",
-    "tree-sitter-cpp": "^0.23.4"
+    "tree-sitter-cpp": "^0.23.4",
+    "tree-sitter-go": "^0.21.0",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-python": "^0.21.0",
+    "tree-sitter-typescript": "^0.23.2"
   }
 }
