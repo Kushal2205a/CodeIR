@@ -31,7 +31,13 @@ body {
   flex-direction: column;
   background:   var(--vscode-sideBar-background);
   border-right: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border));
-  overflow:     hidden;
+  
+}
+.sidebar{
+    overflow-y: auto;
+}
+.progress-sidebar {
+    overflow:     hidden;
 }
 
 .sidebar-header,
@@ -420,9 +426,27 @@ body {
 .block-card {
   border:        1px solid var(--vscode-panel-border);
   border-radius: 4px;
-  overflow:      hidden;
+  overflow:      visible;  /* was hidden, changed to visible */
+  flex-shrink:   0;        /* add this — stops cards from squishing */
 }
 
+.block-body {
+  padding:        12px 14px;
+  display:        flex;
+  flex-direction: column;
+  gap:            8px;
+  overflow:       visible;  /* add this */
+}
+
+.practice-scroll {
+  flex:           1;
+  overflow-y:     auto;
+  overflow-x:     hidden;  /* add this */
+  padding:        18px 20px;
+  display:        flex;
+  flex-direction: column;
+  gap:            18px;
+}
 .block-card.active {
   border-color: var(--vscode-focusBorder);
 }
@@ -598,4 +622,99 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+.file-overview {
+    padding: 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.overview-summary {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #cfcfcf;
+    margin-bottom: 14px;
+}
+
+.overview-section {
+    margin-top: 14px;
+}
+
+.overview-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    opacity: 0.7;
+    margin-bottom: 8px;
+    letter-spacing: 0.08em;
+}
+
+.overview-list {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.overview-list li {
+    margin-bottom: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.overview-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.sidebar-nav {
+    padding: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.sidebar-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s ease;
+}
+
+.sidebar-item:hover {
+    background: rgba(255,255,255,0.05);
+}
+
+.sidebar-item.active {
+    background: #2d4f73;
+}
+
+#overview-content {
+    padding: 22px;
+}
+
+.overview-main-summary {
+    font-size: 15px;
+    line-height: 1.7;
+    margin-bottom: 28px;
+    color: #d7d7d7;
+}
+
+.overview-main-section {
+    margin-bottom: 28px;
+}
+
+.overview-main-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.7;
+    margin-bottom: 12px;
+}
+
+.overview-main-list li {
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.overview-main-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
