@@ -15,9 +15,54 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	// command: learn function at cursor
+	// command: learn function at cursor
 	const learnCommand = vscode.commands.registerCommand(
 		'learntovibe.learnFunction',
-		async () => {
+		async (functionName?: string) => {
+			const editor = vscode.window.activeTextEditor;
+			if (!editor) return;
+
+			if (!isSupported(editor.document.languageId)) {
+				vscode.window.showWarningMessage('LearnToVibe: this file type is not supported.');
+				return;
+			}
+
+			const functions = parseDocument(editor.document);
+			if (functions.length === 0) {
+				vscode.window.showWarningMessage('LearnToVibe: no functions found in this file.');
+				return;
+			}
+
+			// If called from a codelens, functionName is passed directly.
+			// If called from the command palette or keybinding, fall back to cursor position.
+			let targetFn = functionName
+				? functions.find(f => f.name === functionName)
+				: parseFunctionAtCursor(editor.document, editor.selection.active);
+
+			// If no function at cursor, default to first
+			if (!targetFn) {
+				targetFn = functions[0];
+			}
+
+			const targetIndex = functions.findIndex(f => f.name === targetFn!.name);
+
+			const panel = await ExplainPanel.create(
+				extensionPath,
+				functions,
+				editor.document.languageId
+			);
+
+			// Immediately switch to the target function
+			if (targetIndex !== -1) {
+				panel.selectFunction(targetIndex);
+			}
+		}
+	);
+
+	// command: practice function at cursor directly
+	const practiceCommand = vscode.commands.registerCommand(
+		'learntovibe.practiceFunction',
+		async (functionName?: string) => {
 			const editor = vscode.window.activeTextEditor;
 			if (!editor) return;
 
@@ -29,35 +74,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 
 			const functions = parseDocument(editor.document);
-			if (functions.length === 0) {
-				vscode.window.showWarningMessage(
-					'LearnToVibe: no functions found in this file.'
-				);
-				return;
-			}
 
-			await ExplainPanel.create(extensionPath, functions);
-		}
-	);
-
-	// command: practice function at cursor directly
-	const practiceCommand = vscode.commands.registerCommand(
-		'learntovibe.practiceFunction',
-		async () => {
-			const editor = vscode.window.activeTextEditor;
-			if (!editor) return;
-
-			if (!isSupported(editor.document.languageId)) {
-				vscode.window.showWarningMessage(
-					'LearnToVibe: this file type is not supported.'
-				);
-				return;
-			}
-
-			const fn = parseFunctionAtCursor(
-				editor.document,
-				editor.selection.active
-			);
+			// If called from a codelens, functionName is passed directly.
+			// Otherwise fall back to cursor position.
+			const fn = functionName
+				? functions.find(f => f.name === functionName) ?? parseFunctionAtCursor(editor.document, editor.selection.active)
+				: parseFunctionAtCursor(editor.document, editor.selection.active);
 
 			if (!fn) {
 				vscode.window.showWarningMessage(
@@ -74,7 +96,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				},
 				async () => {
 					const practiceData = await generatePracticeBlocks(fn);
-					await PracticePanel.create(extensionPath, fn, practiceData);
+					await PracticePanel.create(extensionPath, fn, practiceData, editor.document.languageId);
 				}
 			);
 		}
@@ -141,6 +163,7 @@ class LearnToVibeCodeLensProvider implements vscode.CodeLensProvider {
 				new vscode.CodeLens(range, {
 					title: '$(book) Learn',
 					command: 'learntovibe.learnFunction',
+					arguments: [fn.name],
 					tooltip: `Open explanation for ${fn.name}`,
 				})
 			);
@@ -149,6 +172,7 @@ class LearnToVibeCodeLensProvider implements vscode.CodeLensProvider {
 				new vscode.CodeLens(range, {
 					title: '$(pencil) Practice',
 					command: 'learntovibe.practiceFunction',
+					arguments: [fn.name],
 					tooltip: `Jump straight to practice for ${fn.name}`,
 				})
 			);
