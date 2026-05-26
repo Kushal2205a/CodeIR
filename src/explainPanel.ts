@@ -2,8 +2,14 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { FunctionNode } from './parser/extract';
-
-import { explainFunction, ExplanationResult, generatePracticeBlocks, callLLM } from './apiClient';
+import {
+    explainFunction,
+    ExplanationResult,
+    generatePracticeBlocks,
+    generateFileOverview,
+    FileOverviewResult,
+    callLLM
+} from './apiClient';
 import * as crypto from 'crypto';
 
 export class ExplainPanel {
@@ -15,9 +21,15 @@ export class ExplainPanel {
     private _explanations: Map<string, ExplanationResult> = new Map();
     private _disposables: vscode.Disposable[] = [];
     private _currentRequest: number = 0;
+    private _fileOverview: FileOverviewResult | null = null;
+    private readonly _languageId: string;
+    private _isGeneratingPractice = false;
+
+
     public static async create(
         extensionPath: string,
-        functions: FunctionNode[]
+        functions: FunctionNode[],
+        languageId: string
     ): Promise<ExplainPanel> {
         const column = vscode.ViewColumn.Beside;
 
@@ -40,20 +52,31 @@ export class ExplainPanel {
             }
         );
 
-        ExplainPanel.currentPanel = new ExplainPanel(panel, extensionPath, functions);
+        ExplainPanel.currentPanel = new ExplainPanel(panel, extensionPath, functions, languageId);
         return ExplainPanel.currentPanel;
     }
 
     private constructor(
         panel: vscode.WebviewPanel,
         extensionPath: string,
-        functions: FunctionNode[]
+        functions: FunctionNode[],
+        languageId: string
     ) {
         this._panel = panel;
         this._extensionPath = extensionPath;
         this._functions = functions;
+        this._languageId = languageId;
 
         this._panel.webview.html = this._getHtml();
+        this._panel.webview.postMessage({
+            type: 'init',
+            functions: this._functions.map(f => ({
+                name: f.name,
+                nodeType: f.nodeType,
+            })),
+            activeIndex: 0,
+        });
+
 
         this._panel.webview.onDidReceiveMessage(
             async (message) => await this._handleMessage(message),
@@ -67,47 +90,58 @@ export class ExplainPanel {
             this._disposables
         );
 
-        // load first function automatically
-        this._loadFunction(0);
     }
 
     private async _loadFunction(index: number): Promise<void> {
 
-        const requestId = Date.now();
-        this._currentRequest = requestId;
+        const requestId = ++this._currentRequest;
         const fn = this._functions[index];
         if (!fn) return;
 
         this._activeIndex = index;
 
-        // send sidebar list immediately
-        this._panel.webview.postMessage({
-            type: 'init',
-            functions: this._functions.map(f => ({
-                name: f.name,
-                nodeType: f.nodeType,
-            })),
-            activeIndex: index,
-        });
+
 
         const cacheKey = `${fn.name}:${fn.startLine}:${fn.endLine}`;
         // check cache first
         if (this._explanations.has(cacheKey)) {
+
+            if (
+                requestId !== this._currentRequest
+            ) {
+                return;
+            }
+
             this._panel.webview.postMessage({
                 type: 'explanation',
-                explanation: this._explanations.get(cacheKey),
+                explanation:
+                    this._explanations.get(cacheKey),
             });
+
             return;
         }
 
         // show loading state
-        this._panel.webview.postMessage({ type: 'loading', functionName: fn.name });
-
-        if (requestId !== this._currentRequest) return;
+        this._panel.webview.postMessage({
+            type: 'loading',
+            functionName: fn.name,
+            activeIndex: index,
+        });
 
         try {
-            const result = await explainFunction(fn);
-            this._explanations.set(cacheKey, result);
+            const result =
+                await explainFunction(fn);
+
+            if (
+                requestId !== this._currentRequest
+            ) {
+                return;
+            }
+
+            this._explanations.set(
+                cacheKey,
+                result
+            );
 
             this._panel.webview.postMessage({
                 type: 'explanation',
@@ -121,11 +155,53 @@ export class ExplainPanel {
         }
     }
 
+    private async _loadFileOverview(): Promise<void> {
+
+        try {
+
+            const result =
+                await generateFileOverview(
+                    this._functions
+                );
+
+            this._fileOverview = result;
+
+            this._panel.webview.postMessage({
+                type: 'fileOverview',
+                overview: result,
+            });
+
+        } catch {
+
+            this._fileOverview = {
+                summary: 'Could not generate file overview.',
+                responsibilities: [],
+                patterns: [],
+            };
+
+            this._panel.webview.postMessage({
+                type: 'fileOverview',
+                overview: this._fileOverview,
+            });
+        }
+    }
+
     private async _handleMessage(message: any): Promise<void> {
         switch (message.type) {
+            case 'loadOverview':
+
+                if (!this._fileOverview) {
+                    await this._loadFileOverview();
+                }
+
+                break;
 
             case 'selectFunction':
-                await this._loadFunction(message.index);
+
+                await this._loadFunction(
+                    message.index
+                );
+
                 break;
 
             case 'chat': {
@@ -163,33 +239,94 @@ Answer clearly and concisely in plain text, no JSON.
             }
 
             case 'done': {
-                const fn = this._functions[this._activeIndex];
 
-                this._panel.webview.postMessage({ type: 'generatingPractice' });
+    if (this._isGeneratingPractice) {
+        return;
+    }
 
-                try {
-                    const practiceData = await generatePracticeBlocks(fn);
-                    const { PracticePanel } = await import('./practicePanel.ts');
-                    await PracticePanel.create(this._extensionPath, fn, practiceData);
+    this._isGeneratingPractice = true;
 
-                    // clear the loading state
-                    this._panel.webview.postMessage({ type: 'doneComplete' });
-                } catch {
-                    this._panel.webview.postMessage({
-                        type: 'error',
-                        message: 'Failed to generate practice blocks.',
-                    });
-                }
-                break;
-            }
+    const fn =
+        this._functions[this._activeIndex];
+
+    this._panel.webview.postMessage({
+        type: 'generatingPractice'
+    });
+
+    try {
+
+        if (!fn) {
+
+            this._isGeneratingPractice = false;
+
+            return;
         }
+
+        const practiceData =
+            await generatePracticeBlocks(fn);
+
+        const { PracticePanel } =
+            await import('./practicePanel.ts');
+
+        await PracticePanel.create(
+            this._extensionPath,
+            fn,
+            practiceData,
+            this._languageId
+        );
+
+        this._panel.webview.postMessage({
+            type: 'doneComplete'
+        });
+
+        this._isGeneratingPractice = false;
+
+    } catch {
+
+        this._isGeneratingPractice = false;
+
+        this._panel.webview.postMessage({
+            type: 'error',
+            message:
+                'Failed to generate practice blocks.',
+        });
+    }
+
+    break;
+}
+        }
+    }
+    public selectFunction(index: number): void {
+        this._activeIndex = index;
+        this._loadFunction(index);
     }
 
     private async _update(functions: FunctionNode[]): Promise<void> {
         this._functions = functions;
         this._activeIndex = 0;
-        this._explanations.clear();
-        await this._loadFunction(0);
+
+        this._currentRequest = 0;
+        // Keep _fileOverview cache — it's file-level and re-generating it would
+        // trigger an unnecessary LLM call that races the incoming function load.
+
+        // Re-send init so the webview function list is fresh.
+        this._panel.webview.postMessage({
+            type: 'init',
+            functions: this._functions.map(f => ({
+                name: f.name,
+                nodeType: f.nodeType,
+            })),
+            activeIndex: 0,
+        });
+
+        // If overview was already cached, push it straight back so the webview
+        // doesn't sit on the loading spinner or fire a redundant loadOverview message.
+        if (this._fileOverview) {
+            this._panel.webview.postMessage({
+                type: 'fileOverview',
+                overview: this._fileOverview,
+            });
+        }
     }
 
     private _getHtml(): string {
