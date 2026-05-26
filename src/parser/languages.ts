@@ -49,6 +49,6 @@ export const languageMap: Record<string, LanguageConfig> = {
     parameterNode: 'parameter_list',
     nameNode:      'identifier',
   },
-}
+};
 
 export type SupportedLanguage = keyof typeof languageMap
