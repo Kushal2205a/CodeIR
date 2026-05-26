@@ -40,7 +40,7 @@
     <script nonce="{{NONCE}}">
         const vscode = acquireVsCodeApi();
 
-        vscode.postMessage({ type: 'ready' });
+        
 
         // ── state ─────────────────────────────────────────────────
         let blocks = [];
@@ -184,24 +184,33 @@
             const msg = event.data;
 
             switch (msg.type) {
-
                 case 'init':
+                    completedIds = new Set();
+
+                    blocks = [];
+                    activeBlockId = null;
+
                     blocks = msg.blocks;
+
                     activeBlockId = blocks[0]?.id ?? null;
+
                     psFnName.textContent = msg.functionName;
+
                     renderBlocks();
                     renderSidebar();
+
                     break;
 
                 case 'checkResult':
                     if (msg.correct) {
                         completedIds.add(msg.blockId);
-                        activeBlockId = msg.next ?? msg.blockId;
-
+                        if (msg.next !== null && msg.next !== undefined) {
+                            activeBlockId = msg.next;
+                        }
                         renderBlocks();
+            
                         renderSidebar();
 
-                        // scroll to next block
                         if (msg.next) {
                             setTimeout(() => {
                                 const el = document.getElementById(`block-${msg.next}`);
@@ -213,14 +222,14 @@
                     } else {
                         const errorRow = document.getElementById(`error-row-${msg.blockId}`);
                         if (errorRow) {
+                            errorRow.textContent = msg.reason ?? 'Not quite — try again.';
                             errorRow.style.display = 'flex';
                             setTimeout(() => {
                                 errorRow.style.display = 'none';
-                            }, 2000);
+                            }, 3000);
                         }
                     }
                     break;
-
                 case 'hint': {
                     const hintBox = document.getElementById(`hint-box-${msg.blockId}`);
                     const hintBtn = document.getElementById(`hint-btn-${msg.blockId}`);

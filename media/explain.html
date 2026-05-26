@@ -19,6 +19,16 @@
                 <div class="sidebar-title">Functions</div>
                 <div class="sidebar-filename" id="filename">—</div>
             </div>
+
+            <div class="sidebar-nav">
+
+                <div class="sidebar-item active" id="overview-tab">
+                    Overview
+                </div>
+
+            </div>
+
+
             <div class="fn-list" id="fn-list"></div>
         </div>
 
@@ -48,7 +58,41 @@
                         <div class="spinner"></div>
                         <span>Generating practice blocks...</span>
                     </div>
+                    <div id="overview-content" style="display:none;">
+                        <div id="overview-loading" class="state-box">
 
+                            <div class="spinner"></div>
+
+                            <span>Generating file overview...</span>
+
+                        </div>
+
+                        <div class="overview-main-summary" id="overview-summary">
+                        </div>
+
+                        <div class="overview-main-section">
+
+                            <div class="overview-main-title">
+                                Responsibilities
+                            </div>
+
+                            <ul class="overview-main-list" id="overview-responsibilities">
+                            </ul>
+
+                        </div>
+
+                        <div class="overview-main-section">
+
+                            <div class="overview-main-title">
+                                Patterns
+                            </div>
+
+                            <div class="overview-main-tags" id="overview-patterns">
+                            </div>
+
+                        </div>
+
+                    </div>
                     <div id="explanation-content" style="display:none;">
                         <div class="exp-fn-name" id="exp-fn-name"></div>
                         <div class="exp-fn-sig" id="exp-fn-sig"></div>
@@ -82,7 +126,26 @@
 
         // ── DOM refs ──────────────────────────────────────────────
         const fnList = document.getElementById('fn-list');
+        const overviewTab =
+            document.getElementById('overview-tab');
+
+        const overviewContent =
+            document.getElementById('overview-content');
+
+        const overviewSummary =
+            document.getElementById('overview-summary');
+
+        const overviewResponsibilities =
+            document.getElementById('overview-responsibilities');
+
+        const overviewPatterns =
+            document.getElementById('overview-patterns');
+
         const topbarLabel = document.getElementById('topbar-label');
+        const overviewLoading =
+            document.getElementById(
+                'overview-loading'
+            );
         const loadingState = document.getElementById('loading-state');
         const errorState = document.getElementById('error-state');
         const errorText = document.getElementById('error-text');
@@ -98,17 +161,41 @@
         const sendBtn = document.getElementById('send-btn');
         const doneBtn = document.getElementById('done-btn');
 
+
         // ── state ─────────────────────────────────────────────────
         let activeIndex = 0;
-
+        let currentMode = 'overview';
+        let overviewLoaded = false;
         // ── helpers ───────────────────────────────────────────────
         function showOnly(el) {
-            [loadingState, errorState, generatingState, expContent].forEach(e => {
-                e.style.display = 'none';
-            });
-            if (el) el.style.display = 'flex';
-        }
 
+            [
+                loadingState,
+                errorState,
+                generatingState,
+                expContent,
+                overviewContent
+            ].forEach(e => {
+
+                if (e) {
+                    e.style.display = 'none';
+                }
+            });
+
+            if (!el) {
+                return;
+            }
+
+            if (
+                el === loadingState ||
+                el === errorState ||
+                el === generatingState
+            ) {
+                el.style.display = 'flex';
+            } else {
+                el.style.display = 'block';
+            }
+        }
         function appendChat(text, role) {
             const div = document.createElement('div');
             div.className = `chat-msg ${role}`;
@@ -127,12 +214,97 @@
           <span class="fn-type">${fn.nodeType}</span>
         `;
                 item.addEventListener('click', () => {
-                    vscode.postMessage({ type: 'selectFunction', index: i });
+
+                    activeIndex = i;
+
+                    document
+                        .querySelectorAll('.fn-item')
+                        .forEach(el =>
+                            el.classList.remove('active')
+                        );
+
+                    item.classList.add('active');
+
+                    showFunction();
+
+                    vscode.postMessage({
+                        type: 'selectFunction',
+                        index: i
+                    });
                 });
                 fnList.appendChild(item);
             });
         }
 
+        function renderFileOverview(overview) {
+            overviewLoading.style.display = 'none';
+
+            overviewSummary.textContent =
+                overview.summary;
+
+            overviewResponsibilities.innerHTML =
+                overview.responsibilities
+                    .map(r => `<li>${r}</li>`)
+                    .join('');
+
+            overviewPatterns.innerHTML =
+                overview.patterns
+                    .map(p =>
+                        `<span class="tag">${p}</span>`
+                    )
+                    .join('');
+        }
+
+
+        function showOverview() {
+
+            currentMode = 'overview';
+            if (
+                !overviewSummary.textContent.trim()
+            ) {
+                overviewLoading.style.display =
+                    'flex';
+            }
+
+            showOnly(overviewContent);
+
+            overviewTab.classList.add('active');
+
+            document
+                .querySelectorAll('.fn-item')
+                .forEach(el =>
+                    el.classList.remove('active')
+                );
+
+            // Clear topbar function state
+            topbarLabel.textContent =
+                'File Overview';
+
+            doneBtn.style.display = 'none';
+
+            if (!overviewLoaded) {
+
+                vscode.postMessage({
+                    type: 'loadOverview'
+                });
+            }
+        }
+        function showFunction() {
+
+            currentMode = 'function';
+
+            showOnly(expContent);
+
+            overviewTab.classList.remove('active');
+
+            doneBtn.style.display = 'inline-flex';
+        }
+        overviewTab.addEventListener(
+            'click',
+            () => {
+                showOverview();
+            }
+        );
         document.getElementById('retry-btn').addEventListener('click', () => {
             vscode.postMessage({ type: 'selectFunction', index: activeIndex });
         });
@@ -143,15 +315,51 @@
 
             switch (msg.type) {
 
+                case 'fileOverview':
+                    overviewLoaded = true;
+
+                    renderFileOverview(
+                        msg.overview
+                    );
+                    if (currentMode === 'overview') {
+                        showOverview();
+                    }
+
+                    break;
+
                 case 'init':
                     renderFnList(msg.functions, msg.activeIndex);
                     activeIndex = msg.activeIndex;
+                    topbarLabel.textContent =
+                        'File Overview';
+
+                    expFnName.textContent = '';
+
+                    expBody.textContent = '';
+
+                    expTags.innerHTML = '';
+
+                    callInfo.textContent = '';
+                    showOverview();
                     break;
 
                 case 'loading':
-                    topbarLabel.textContent = msg.functionName;
+                    activeIndex = msg.activeIndex;
+
+                    currentMode = 'function';
+
+                    overviewTab.classList.remove('active');
+
+                    topbarLabel.textContent =
+                        msg.functionName;
+
+                    doneBtn.style.display =
+                        'inline-flex';
+
                     showOnly(loadingState);
+
                     chatMessages.innerHTML = '';
+
                     break;
 
                 case 'explanation': {
@@ -167,8 +375,9 @@
 
                     callInfo.textContent = e.callInfo || '';
 
-                    showOnly(null);
-                    expContent.style.display = 'block';
+                    showOnly(expContent);
+
+                    showFunction();
                     break;
                 }
 
@@ -186,8 +395,7 @@
                     break;
 
                 case 'doneComplete':
-                    showOnly(null);
-                    expContent.style.display = 'block';
+                    showOnly(expContent);
                     break;
             }
         });
