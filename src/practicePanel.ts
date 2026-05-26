@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import { FunctionNode } from './parser/extract';
 import { PracticeResult, PracticeBlock } from './apiClient';
 import * as crypto from 'crypto';
+import { validateBlock, ValidationResult } from './parser/validate';
+import { ExplainPanel } from './explainPanel';
 
 interface BlockState {
     completed: boolean;
@@ -12,26 +14,82 @@ interface BlockState {
 }
 
 export class PracticePanel {
-    public static currentPanel: PracticePanel | undefined;
+
+    static currentPanel: PracticePanel | undefined;
+
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionPath: string;
-    private readonly _fn: FunctionNode;
-    private readonly _practiceData: PracticeResult;
+
+    private _blocks: PracticeBlock[] = [];
+
+    private _functionName = '';
+
     private _blockStates: Map<number, BlockState> = new Map();
     private _disposables: vscode.Disposable[] = [];
+
+    private readonly _languageId: string;
+
+    private _resetState() {
+
+        this._blocks = [];
+
+        this._blockStates.clear();
+    }
 
     public static async create(
         extensionPath: string,
         fn: FunctionNode,
-        practiceData: PracticeResult
+        practiceData: PracticeResult,
+        languageId: string
     ): Promise<PracticePanel> {
-        const column = vscode.ViewColumn.Beside;
 
-        if (PracticePanel.currentPanel) {
-            PracticePanel.currentPanel._panel.reveal(column);
-            PracticePanel.currentPanel.dispose();
+    
+        // Decide column based on whether Explain panel is open
+        
+        let column = vscode.ViewColumn.Beside;
+
+        if (ExplainPanel.currentPanel) {
+            // If Explain panel exists, open Practice as a new tab beside it
+            column = vscode.ViewColumn.Beside;
+        } else {
+            // No Explain panel → open in new side panel (original behavior)
+            column = vscode.ViewColumn.Beside;
         }
 
+        
+        // Reuse existing panel if possible
+        
+        if (PracticePanel.currentPanel) {
+            PracticePanel.currentPanel._resetState();
+
+            PracticePanel.currentPanel._blocks = practiceData.blocks;
+            PracticePanel.currentPanel._functionName = fn.name;
+
+            for (const block of practiceData.blocks) {
+                PracticePanel.currentPanel._blockStates.set(block.id, {
+                    completed: false,
+                    attempts: 0,
+                    hintsUsed: 0,
+                });
+            }
+
+            PracticePanel.currentPanel._panel.title = `LearnToVibe — Practice: ${fn.name}`;
+            PracticePanel.currentPanel._panel.reveal(column);
+
+            setTimeout(() => {
+                PracticePanel.currentPanel?._panel.webview.postMessage({
+                    type: 'init',
+                    functionName: fn.name,
+                    blocks: practiceData.blocks,
+                });
+            }, 50);
+
+            return PracticePanel.currentPanel;
+        }
+
+        
+        // Create new panel
+    
         const panel = vscode.window.createWebviewPanel(
             'learntovibe.practice',
             `LearnToVibe — Practice: ${fn.name}`,
@@ -49,7 +107,8 @@ export class PracticePanel {
             panel,
             extensionPath,
             fn,
-            practiceData
+            practiceData,
+            languageId
         );
 
         return PracticePanel.currentPanel;
@@ -59,25 +118,43 @@ export class PracticePanel {
         panel: vscode.WebviewPanel,
         extensionPath: string,
         fn: FunctionNode,
-        practiceData: PracticeResult
+        practiceData: PracticeResult,
+        languageId: string
     ) {
+
         this._panel = panel;
+
         this._extensionPath = extensionPath;
-        this._fn = fn;
-        this._practiceData = practiceData;
+
+        this._languageId = languageId;
+
+        this._functionName = fn.name;
+
+        this._blocks = practiceData.blocks;
 
         for (const block of practiceData.blocks) {
-            this._blockStates.set(block.id, {
-                completed: false,
-                attempts: 0,
-                hintsUsed: 0,
-            });
+
+            this._blockStates.set(
+                block.id,
+                {
+                    completed: false,
+                    attempts: 0,
+                    hintsUsed: 0,
+                }
+            );
         }
 
         this._panel.webview.html = this._getHtml();
 
+        setTimeout(() => {
+            this._sendInitialData();
+        }, 50);
+
         this._panel.webview.onDidReceiveMessage(
-            async (message) => await this._handleMessage(message),
+            async (message) => {
+
+                await this._handleMessage(message);
+            },
             null,
             this._disposables
         );
@@ -87,136 +164,261 @@ export class PracticePanel {
             null,
             this._disposables
         );
-
-        // no setTimeout — wait for ready message from webview
     }
 
+    
+    // Initial payload
+
+
     private _sendInitialData(): void {
+
         this._panel.webview.postMessage({
             type: 'init',
-            functionName: this._fn.name,
-            blocks: this._practiceData.blocks,
+
+            functionName: this._functionName,
+
+            blocks: this._blocks,
         });
     }
 
-    private async _handleMessage(message: any): Promise<void> {
+    
+    // Message handling
+    
+
+    private async _handleMessage(
+        message: any
+    ): Promise<void> {
+
         switch (message.type) {
 
-            case 'ready':
-                this._sendInitialData();
-                break;
+
 
             case 'check': {
-                const { blockId, userInput } = message;
-                const block = this._practiceData.blocks.find(b => b.id === blockId);
-                const state = this._blockStates.get(blockId);
 
-                if (!block || !state) break;
+                const { blockId, userInput } = message;
+
+                const block = this._blocks.find(
+                    b => b.id === blockId
+                );
+
+                const state =
+                    this._blockStates.get(blockId);
+
+                if (!block || !state) {
+                    break;
+                }
 
                 state.attempts += 1;
 
-                const isCorrect = this._validateBlock(userInput, block);
+                const result =
+                    this._validateBlock(
+                        userInput,
+                        block
+                    );
 
-                if (isCorrect) {
+                if (result.passed) {
+
                     state.completed = true;
-                    this._blockStates.set(blockId, state);
+
+                    this._blockStates.set(
+                        blockId,
+                        state
+                    );
 
                     this._panel.webview.postMessage({
                         type: 'checkResult',
+
                         blockId,
+
                         correct: true,
-                        next: this._getNextUncompletedBlock(blockId),
+
+                        next:
+                            this._getNextUncompletedBlock(
+                                blockId
+                            ),
                     });
+
                 } else {
+
                     this._panel.webview.postMessage({
                         type: 'checkResult',
+
                         blockId,
+
                         correct: false,
+
                         attempts: state.attempts,
+
+                        reason: result.reason,
                     });
                 }
+
                 break;
             }
 
+            
+            // Hint
             case 'hint': {
-                const { blockId } = message;
-                const block = this._practiceData.blocks.find(b => b.id === blockId);
-                const state = this._blockStates.get(blockId);
 
-                if (!block || !state) break;
+                const { blockId } = message;
+
+                const block = this._blocks.find(
+                    b => b.id === blockId
+                );
+
+                const state =
+                    this._blockStates.get(blockId);
+
+                if (!block || !state) {
+                    break;
+                }
 
                 state.hintsUsed += 1;
-                this._blockStates.set(blockId, state);
 
-                const hintText = state.hintsUsed === 1 ? block.hint1 : block.hint2;
+                this._blockStates.set(
+                    blockId,
+                    state
+                );
+
+                const hintText =
+                    state.hintsUsed === 1
+                        ? block.hint1
+                        : block.hint2;
 
                 this._panel.webview.postMessage({
                     type: 'hint',
+
                     blockId,
+
                     text: hintText,
+
                     hintsUsed: state.hintsUsed,
+
                     maxHints: 2,
                 });
+
                 break;
             }
 
+            
+            // Completion
             case 'complete': {
-                const total = this._practiceData.blocks.length;
-                const completed = [...this._blockStates.values()].filter(s => s.completed).length;
+
+                const total =
+                    this._blocks.length;
+
+                const completed =
+                    [...this._blockStates.values()]
+                        .filter(
+                            s => s.completed
+                        )
+                        .length;
 
                 if (completed === total) {
+
                     vscode.window.showInformationMessage(
-                        `You reconstructed ${this._fn.name} — ${total} blocks completed.`
+                        `You reconstructed ${this._functionName} — ${total} blocks completed.`
                     );
                 }
+
                 break;
             }
         }
     }
 
-    private _validateBlock(userInput: string, block: PracticeBlock): boolean {
-        const normalize = (s: string) =>
-            s
-                .replace(/\/\/.*$/gm, '')     // strip line comments
-                .replace(/\/\*[\s\S]*?\*\//g, '') // strip block comments
-                .replace(/\s+/g, ' ')         // collapse whitespace
-                .replace(/;\s*/g, ';')        // normalize semicolons
-                .trim()
-                .toLowerCase();
+    // Validation
+    private _validateBlock(
+        userInput: string,
+        block: PracticeBlock
+    ): ValidationResult {
 
-        return normalize(userInput) === normalize(block.code);
+        return validateBlock(
+            userInput,
+            block.code,
+            this._languageId
+        );
     }
 
-    private _getNextUncompletedBlock(currentBlockId: number): number | null {
-        const blocks = this._practiceData.blocks;
+    // Next block
+    private _getNextUncompletedBlock(
+        currentBlockId: number
+    ): number | null {
+
+        const blocks = this._blocks;
 
         for (const block of blocks) {
-            if (block.id <= currentBlockId) continue;
-            const state = this._blockStates.get(block.id);
-            if (!state?.completed) return block.id;
+
+            if (block.id <= currentBlockId) {
+                continue;
+            }
+
+            const state =
+                this._blockStates.get(block.id);
+
+            if (!state?.completed) {
+                return block.id;
+            }
         }
 
         return null;
     }
 
+    // HTML
     private _getHtml(): string {
-        const htmlPath = path.join(this._extensionPath, 'media', 'practice.html');
-        const cssUri = this._panel.webview.asWebviewUri(
-            vscode.Uri.file(path.join(this._extensionPath, 'media', 'main.css'))
+
+        const htmlPath = path.join(
+            this._extensionPath,
+            'media',
+            'practice.html'
         );
 
-        const nonce = crypto.randomUUID().replace(/-/g, '');
+        const cssUri =
+            this._panel.webview.asWebviewUri(
+                vscode.Uri.file(
+                    path.join(
+                        this._extensionPath,
+                        'media',
+                        'main.css'
+                    )
+                )
+            );
 
-        let html = fs.readFileSync(htmlPath, 'utf8');
-        html = html.replace(/{{CSS_URI}}/g, cssUri.toString());
-        html = html.replace(/{{NONCE}}/g, nonce);
+        const nonce =
+            crypto.randomUUID()
+                .replace(/-/g, '');
+
+        let html =
+            fs.readFileSync(
+                htmlPath,
+                'utf8'
+            );
+
+        html = html.replace(
+            /{{CSS_URI}}/g,
+            cssUri.toString()
+        );
+
+        html = html.replace(
+            /{{NONCE}}/g,
+            nonce
+        );
+
         return html;
     }
 
+
+    // Dispose
     public dispose(): void {
-        PracticePanel.currentPanel = undefined;
+
+        PracticePanel.currentPanel =
+            undefined;
+
         this._panel.dispose();
-        this._disposables.forEach(d => d.dispose());
+
+        this._disposables.forEach(
+            d => d.dispose()
+        );
+
         this._disposables = [];
     }
 }
