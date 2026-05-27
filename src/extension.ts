@@ -1,11 +1,13 @@
 import * as vscode from 'vscode';
 import { parseDocument, parseFunctionAtCursor, isSupported } from './parser/index';
-import { ExplainPanel } from './explainPanel';
-import { PracticePanel } from './practicePanel';
-import { generatePracticeBlocks } from './apiClient';
+import { LearnPanel } from './panel';
+import { generatePracticeBlocks, initSecretStorage, setApiKey, clearApiKey } from './apiClient';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const extensionPath = context.extensionPath;
+
+	// Initialize SecretStorage for API keys
+	initSecretStorage(context.secrets);
 
 	// set supported languages as context for when clauses in package.json
 	vscode.commands.executeCommand(
@@ -14,7 +16,6 @@ export function activate(context: vscode.ExtensionContext): void {
 		['typescript', 'typescriptreact', 'javascript', 'javascriptreact', 'python', 'go']
 	);
 
-	// command: learn function at cursor
 	// command: learn function at cursor
 	const learnCommand = vscode.commands.registerCommand(
 		'learntovibe.learnFunction',
@@ -46,7 +47,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 			const targetIndex = functions.findIndex(f => f.name === targetFn!.name);
 
-			const panel = await ExplainPanel.create(
+			const panel = await LearnPanel.create(
 				extensionPath,
 				functions,
 				editor.document.languageId
@@ -95,8 +96,12 @@ export function activate(context: vscode.ExtensionContext): void {
 					cancellable: false,
 				},
 				async () => {
-					const practiceData = await generatePracticeBlocks(fn);
-					await PracticePanel.create(extensionPath, fn, practiceData, editor.document.languageId);
+					const panel = await LearnPanel.create(
+						extensionPath,
+						functions,
+						editor.document.languageId
+					);
+					await panel.startPractice(fn);
 				}
 			);
 		}
@@ -115,34 +120,83 @@ export function activate(context: vscode.ExtensionContext): void {
 		new LearnToVibeCodeLensProvider()
 	);
 
-	context.subscriptions.push(learnCommand, practiceCommand, codeLensProvider);
-
 
 	const settingsWatcher = vscode.workspace.onDidChangeConfiguration((e) => {
 		if (e.affectsConfiguration('learntovibe')) {
 			// dispose and recreate current panel so it picks up new settings
-			if (ExplainPanel.currentPanel) {
+			if (LearnPanel.currentPanel) {
 				vscode.window.showInformationMessage(
 					'LearnToVibe: settings updated. Reloading...'
 				);
-				ExplainPanel.currentPanel.dispose();
+				LearnPanel.currentPanel.dispose();
 			}
 		}
 	});
+
+	// command: set API key (stores in SecretStorage)
+	const setApiKeyCommand = vscode.commands.registerCommand(
+		'learntovibe.setApiKey',
+		async () => {
+			type Provider = { label: string; id: 'nvidia' | 'openai' | 'anthropic'; url: string };
+			const providers: Provider[] = [
+				{ label: 'NVIDIA', id: 'nvidia', url: 'https://build.nvidia.com' },
+				{ label: 'OpenAI', id: 'openai', url: 'https://platform.openai.com' },
+				{ label: 'Anthropic', id: 'anthropic', url: 'https://console.anthropic.com' },
+			];
+
+			const selected = await vscode.window.showQuickPick(providers, {
+				placeHolder: 'Select provider to set API key',
+			});
+			if (!selected) return;
+
+			const key = await vscode.window.showInputBox({
+				prompt: `Enter your ${selected.label} API key:`,
+				title: `${selected.label} API Key`,
+				ignoreFocusOut: true,
+				password: true,
+			});
+			if (!key) return;
+
+			await setApiKey(selected.id, key);
+			vscode.window.showInformationMessage(`${selected.label} API key saved securely.`);
+		}
+	);
+
+	// command: clear API key
+	const clearApiKeyCommand = vscode.commands.registerCommand(
+		'learntovibe.clearApiKey',
+		async () => {
+			type Provider = { label: string; id: 'nvidia' | 'openai' | 'anthropic' };
+			const providers: Provider[] = [
+				{ label: 'NVIDIA', id: 'nvidia' },
+				{ label: 'OpenAI', id: 'openai' },
+				{ label: 'Anthropic', id: 'anthropic' },
+			];
+
+			const selected = await vscode.window.showQuickPick(providers, {
+				placeHolder: 'Select provider to clear API key',
+			});
+			if (!selected) return;
+
+			await clearApiKey(selected.id);
+			vscode.window.showInformationMessage(`${selected.label} API key cleared.`);
+		}
+	);
 
 	context.subscriptions.push(
 		learnCommand,
 		practiceCommand,
 		codeLensProvider,
-		settingsWatcher
+		settingsWatcher,
+		setApiKeyCommand,
+		clearApiKeyCommand
 	);
 }
 
 
 
 export function deactivate(): void {
-	ExplainPanel.currentPanel?.dispose();
-	PracticePanel.currentPanel?.dispose();
+	LearnPanel.currentPanel?.dispose();
 }
 
 class LearnToVibeCodeLensProvider implements vscode.CodeLensProvider {
