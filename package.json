@@ -29,6 +29,16 @@
         "command": "learntovibe.practiceFunction",
         "title": "Practice this function",
         "category": "LearnToVibe"
+      },
+      {
+        "command": "learntovibe.setApiKey",
+        "title": "Set API Key",
+        "category": "LearnToVibe"
+      },
+      {
+        "command": "learntovibe.clearApiKey",
+        "title": "Clear API Key",
+        "category": "LearnToVibe"
       }
     ],
     "menus": {
@@ -54,8 +64,8 @@
       },
       {
         "command": "learntovibe.practiceFunction",
-        "key": "ctrl+shift+p",
-        "mac": "cmd+shift+p",
+        "key": "ctrl+shift+alt+p",
+        "mac": "cmd+shift+alt+p",
         "when": "editorTextFocus"
       }
     ],
@@ -66,25 +76,49 @@
           "type": "string",
           "enum": [
             "nvidia",
+            "openai",
+            "anthropic",
             "ollama"
           ],
           "default": "nvidia",
-          "description": "AI provider to use for explanations and practice generation."
+          "markdownDescription": "Primary AI provider for explanations and practice generation. Choose **NVIDIA** (cloud, free tier), **OpenAI** (GPT-4o), **Anthropic** (Claude), or **Ollama** (local).",
+          "enumDescriptions": [
+            "NVIDIA AI (cloud, default: Kimi K2.6)",
+            "OpenAI (GPT-4o, GPT-4o-mini)",
+            "Anthropic (Claude Sonnet)",
+            "Ollama (local models via localhost)"
+          ],
+          "order": 1
         },
-        "learntovibe.nvidiaApiKey": {
+        "learntovibe.nvidia.model": {
           "type": "string",
-          "default": "",
-          "description": "Your NVIDIA API key for Kimi K2.6."
+          "default": "moonshotai/kimi-k2.6",
+          "markdownDescription": "NVIDIA model ID to use. Find models at [catalog.ngc.nvidia.com](https://catalog.ngc.nvidia.com).",
+          "order": 2
         },
-        "learntovibe.ollamaBaseUrl": {
+        "learntovibe.openai.model": {
+          "type": "string",
+          "default": "gpt-4o",
+          "markdownDescription": "OpenAI model ID. Use `gpt-4o` for best quality, `gpt-4o-mini` for speed/cost.",
+          "order": 3
+        },
+        "learntovibe.anthropic.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "markdownDescription": "Anthropic model ID. Use `claude-sonnet-4-20250514` (latest, high quality) or `claude-3-5-sonnet-20240620` (stable).",
+          "order": 4
+        },
+        "learntovibe.ollama.baseUrl": {
           "type": "string",
           "default": "http://localhost:11434",
-          "description": "Base URL for your Ollama instance."
+          "markdownDescription": "Base URL for your local Ollama instance.",
+          "order": 5
         },
-        "learntovibe.ollamaModel": {
+        "learntovibe.ollama.model": {
           "type": "string",
-          "default": "llama3",
-          "description": "Ollama model name to use (e.g. llama3, mistral, codellama)."
+          "default": "llama3.1",
+          "markdownDescription": "Ollama model name. Examples: `llama3.1`, `deepseek-coder-v2`, `mistral`, `qwen2.5`. Run `ollama list` to see installed models.",
+          "order": 6
         }
       }
     }
