@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src vscode-resource: 'unsafe-inline'; script-src 'nonce-{{NONCE}}';" />
+    <link rel="stylesheet" href="{{CSS_URI}}" />
+    <title>LearnToVibe</title>
+</head>
+
+<body>
+
+    <div class="shell">
+        <!-- Shared Sidebar -->
+        <div class="sidebar" id="explain-sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Functions</div>
+                <div class="sidebar-filename" id="filename">—</div>
+                <button class="config-btn" id="config-btn" title="Configure API Keys">⚙</button>
+            </div>
+            <div class="sidebar-nav">
+                <div class="sidebar-item active" id="overview-tab">Overview</div>
+            </div>
+            <div class="fn-list" id="fn-list"></div>
+        </div>
+
+        <!-- Progress Sidebar (Practice mode) -->
+        <div class="progress-sidebar" id="practice-sidebar" style="display:none;">
+            <div class="ps-header">
+                <div class="sidebar-title">Blocks</div>
+                <div class="sidebar-filename" id="ps-fn-name">—</div>
+            </div>
+            <div class="block-list" id="block-list"></div>
+            <div class="ps-score">
+                <div class="score-label">Completed</div>
+                <div class="score-val" id="score-val">0 / 0</div>
+            </div>
+        </div>
+
+        <div class="main">
+            <!-- Tab Bar -->
+            <div class="tab-bar" id="tab-bar">
+                <div class="tab active" id="tab-explain" data-tab="explain">Explain</div>
+                <div class="tab" id="tab-practice" data-tab="practice">Practice</div>
+            </div>
+
+            <!-- Explain View -->
+            <div class="tab-content active" id="view-explain">
+                <div class="topbar">
+                    <div class="topbar-label" id="topbar-label">—</div>
+                    <button class="done-btn" id="done-btn">Practice this function ›</button>
+                </div>
+                <div class="content-area">
+                    <div class="explanation-scroll" id="explanation-scroll">
+                        <div id="loading-state" class="state-box" style="display:none;">
+                            <div class="spinner"></div>
+                            <span>Analysing function...</span>
+                        </div>
+                        <div id="error-state" class="state-box error" style="display:none;">
+                            <span id="error-text"></span>
+                            <button id="retry-btn" class="done-btn" style="margin-top:8px;">Retry</button>
+                        </div>
+                        <div id="generating-state" class="state-box" style="display:none;">
+                            <div class="spinner"></div>
+                            <span>Generating practice blocks...</span>
+                        </div>
+                        <div id="overview-content" style="display:none;">
+                            <div id="overview-loading" class="state-box">
+                                <div class="spinner"></div>
+                                <span>Generating file overview...</span>
+                            </div>
+                            <div class="overview-main-summary" id="overview-summary"></div>
+                            <div class="overview-main-section">
+                                <div class="overview-main-title">Responsibilities</div>
+                                <ul class="overview-main-list" id="overview-responsibilities"></ul>
+                            </div>
+                            <div class="overview-main-section">
+                                <div class="overview-main-title">Patterns</div>
+                                <div class="overview-main-tags" id="overview-patterns"></div>
+                            </div>
+                        </div>
+                        <div id="explanation-content" style="display:none;">
+                            <div class="exp-fn-name" id="exp-fn-name"></div>
+                            <div class="exp-fn-sig" id="exp-fn-sig"></div>
+                            <div class="exp-body" id="exp-body"></div>
+                            <div class="exp-tags" id="exp-tags"></div>
+                            <div class="divider"></div>
+                            <div class="call-info" id="call-info"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Collapsible Bottom Chat -->
+                <div class="chat-panel collapsed" id="chat-panel">
+                    <div class="chat-toggle" id="chat-toggle">
+                        <span class="chat-toggle-icon">💬</span>
+                        <span class="chat-toggle-label" id="chat-toggle-label">Chat</span>
+                        <span class="chat-toggle-context" id="chat-toggle-context">File Overview</span>
+                        <span class="chevron">▼</span>
+                    </div>
+                    <div class="chat-content" id="chat-content">
+                        <div class="chat-messages" id="chat-messages"></div>
+                        <div class="chat-input-row">
+                            <input class="chat-input" id="chat-input" type="text"
+                                placeholder="Ask about this function..." />
+                            <button class="send-btn" id="send-btn">›</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Practice View -->
+            <div class="tab-content" id="view-practice">
+                <div class="topbar">
+                    <div class="topbar-label" id="practice-topbar-label">Reconstruct the function</div>
+                    <div class="block-counter" id="block-counter">—</div>
+                </div>
+                <div class="practice-scroll" id="practice-scroll"></div>
+            </div>
+        </div>
+    </div>
+
+    <script nonce="{{NONCE}}">
+        const vscode = acquireVsCodeApi();
+
+        // ── DOM refs ──────────────────────────────────────────────
+        const tabExplain = document.getElementById('tab-explain');
+        const tabPractice = document.getElementById('tab-practice');
+        const viewExplain = document.getElementById('view-explain');
+        const viewPractice = document.getElementById('view-practice');
+        const explainSidebar = document.getElementById('explain-sidebar');
+        const practiceSidebar = document.getElementById('practice-sidebar');
+
+        const fnList = document.getElementById('fn-list');
+        const overviewTab = document.getElementById('overview-tab');
+        const overviewContent = document.getElementById('overview-content');
+        const overviewSummary = document.getElementById('overview-summary');
+        const overviewResponsibilities = document.getElementById('overview-responsibilities');
+        const overviewPatterns = document.getElementById('overview-patterns');
+        const topbarLabel = document.getElementById('topbar-label');
+        const overviewLoading = document.getElementById('overview-loading');
+        const loadingState = document.getElementById('loading-state');
+        const errorState = document.getElementById('error-state');
+        const errorText = document.getElementById('error-text');
+        const generatingState = document.getElementById('generating-state');
+        const expContent = document.getElementById('explanation-content');
+        const expFnName = document.getElementById('exp-fn-name');
+        const expFnSig = document.getElementById('exp-fn-sig');
+        const expBody = document.getElementById('exp-body');
+        const expTags = document.getElementById('exp-tags');
+        const callInfo = document.getElementById('call-info');
+        const chatMessages = document.getElementById('chat-messages');
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        const doneBtn = document.getElementById('done-btn');
+        const configBtn = document.getElementById('config-btn');
+
+        // Chat panel refs
+        const chatPanel = document.getElementById('chat-panel');
+        const chatToggle = document.getElementById('chat-toggle');
+        const chatToggleContext = document.getElementById('chat-toggle-context');
+        const chatContent = document.getElementById('chat-content');
+
+        const psFnName = document.getElementById('ps-fn-name');
+        const blockList = document.getElementById('block-list');
+        const scoreVal = document.getElementById('score-val');
+        const blockCounter = document.getElementById('block-counter');
+        const practiceScroll = document.getElementById('practice-scroll');
+
+        // ── state ─────────────────────────────────────────────────
+        let activeIndex = 0;
+        let currentMode = 'overview';
+        let overviewLoaded = false;
+        let currentTab = 'explain';
+        let isChatExpanded = false;
+
+        // Practice state
+        let blocks = [];
+        let completedIds = new Set();
+        let activeBlockId = null;
+        let practiceFunctionName = '';
+
+        // ── Chat helpers ─────────────────────────────────────────
+        function updateChatContext() {
+            if (currentMode === 'overview') {
+                chatToggleContext.textContent = 'File Overview';
+                chatInput.placeholder = 'Ask about this file...';
+            } else {
+                const fnName = topbarLabel.textContent || 'this function';
+                chatToggleContext.textContent = fnName;
+                chatInput.placeholder = `Ask about ${fnName}...`;
+            }
+        }
+
+        function toggleChat() {
+            isChatExpanded = !isChatExpanded;
+            if (isChatExpanded) {
+                chatPanel.classList.remove('collapsed');
+                chatPanel.classList.add('expanded');
+                chatContent.style.display = 'flex';
+                setTimeout(() => {
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                    chatInput.focus();
+                }, 50);
+            } else {
+                chatPanel.classList.remove('expanded');
+                chatPanel.classList.add('collapsed');
+                chatContent.style.display = 'none';
+            }
+        }
+
+        chatToggle.addEventListener('click', toggleChat);
+
+        // ── Tab switching ────────────────────────────────────────
+        function switchTab(tab) {
+            currentTab = tab;
+            if (tab === 'explain') {
+                tabExplain.classList.add('active');
+                tabPractice.classList.remove('active');
+                viewExplain.classList.add('active');
+                viewPractice.classList.remove('active');
+                explainSidebar.style.display = '';
+                practiceSidebar.style.display = 'none';
+                if (currentMode === 'overview') {
+                    showOnly(overviewContent);
+                    if (!overviewLoaded) overviewLoading.style.display = 'flex';
+                } else if (currentMode === 'function') {
+                    showOnly(expContent);
+                }
+            } else {
+                tabExplain.classList.remove('active');
+                tabPractice.classList.add('active');
+                viewExplain.classList.remove('active');
+                viewPractice.classList.add('active');
+                explainSidebar.style.display = 'none';
+                practiceSidebar.style.display = '';
+                tabPractice.classList.remove('ready');
+            }
+        }
+
+        tabExplain.addEventListener('click', () => switchTab('explain'));
+        tabPractice.addEventListener('click', () => {
+            if (blocks.length === 0) {
+                return;
+            }
+            switchTab('practice');
+        });
+
+        // ── Explain helpers ───────────────────────────────────────
+        function showOnly(el) {
+            [loadingState, errorState, generatingState, expContent, overviewContent].forEach(e => {
+                if (e) e.style.display = 'none';
+            });
+            if (!el) return;
+            if (el === loadingState || el === errorState || el === generatingState) {
+                el.style.display = 'flex';
+            } else {
+                el.style.display = 'block';
+            }
+        }
+        function appendChat(text, role) {
+            const div = document.createElement('div');
+            div.className = `chat-msg ${role}`;
+            div.textContent = text;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        function renderFnList(functions, active) {
+            fnList.innerHTML = '';
+            functions.forEach((fn, i) => {
+                const item = document.createElement('div');
+                item.className = 'fn-item' + (i === active ? ' active' : '');
+                item.innerHTML = `<span class="fn-name-text">${fn.name}</span><span class="fn-type">${fn.nodeType}</span>`;
+                item.addEventListener('click', () => {
+                    activeIndex = i;
+                    document.querySelectorAll('.fn-item').forEach(el => el.classList.remove('active'));
+                    item.classList.add('active');
+                    showFunction();
+                    vscode.postMessage({ type: 'selectFunction', index: i });
+                });
+                fnList.appendChild(item);
+            });
+        }
+        function renderFileOverview(overview) {
+            overviewLoading.style.display = 'none';
+            overviewSummary.textContent = overview.summary;
+            overviewResponsibilities.innerHTML = overview.responsibilities.map(r => `<li>${r}</li>`).join('');
+            overviewPatterns.innerHTML = overview.patterns.map(p => `<span class="tag">${p}</span>`).join('');
+        }
+        function showOverview() {
+            currentMode = 'overview';
+            if (!overviewSummary.textContent.trim()) {
+                overviewLoading.style.display = 'flex';
+            }
+            showOnly(overviewContent);
+            overviewTab.classList.add('active');
+            document.querySelectorAll('.fn-item').forEach(el => el.classList.remove('active'));
+            topbarLabel.textContent = 'File Overview';
+            doneBtn.style.display = 'none';
+            updateChatContext();
+            if (!overviewLoaded) {
+                vscode.postMessage({ type: 'loadOverview' });
+            }
+        }
+        function showFunction() {
+            currentMode = 'function';
+            showOnly(expContent);
+            overviewTab.classList.remove('active');
+            doneBtn.style.display = 'inline-flex';
+            updateChatContext();
+        }
+        overviewTab.addEventListener('click', () => showOverview());
+        document.getElementById('retry-btn').addEventListener('click', () => {
+            vscode.postMessage({ type: 'selectFunction', index: activeIndex });
+        });
+
+        // ── Practice helpers ────────────────────────────────────
+        function renderPracticeSidebar() {
+            blockList.innerHTML = '';
+            blocks.forEach(block => {
+                const done = completedIds.has(block.id);
+                const active = block.id === activeBlockId;
+                const item = document.createElement('div');
+                item.className = 'block-nav-item';
+                item.id = `nav-${block.id}`;
+                item.innerHTML = `
+                    <div class="bni-dot ${done ? 'done' : active ? 'active' : ''}">
+                        ${done ? '✓' : block.id}
+                    </div>
+                    <span class="bni-label ${done ? 'done' : active ? 'active' : ''}">
+                        ${truncate(block.instruction, 28)}
+                    </span>`;
+                blockList.appendChild(item);
+            });
+            scoreVal.textContent = `${completedIds.size} / ${blocks.length}`;
+            blockCounter.textContent = `Block ${activeBlockId} of ${blocks.length}`;
+        }
+
+        function renderPracticeBlocks() {
+            practiceScroll.innerHTML = '';
+            blocks.forEach(block => {
+                const done = completedIds.has(block.id);
+                const active = block.id === activeBlockId;
+                const locked = !done && !active;
+
+                const card = document.createElement('div');
+                card.className = `block-card ${done ? 'success' : active ? 'active' : ''}`;
+                card.id = `block-${block.id}`;
+
+                if (done) {
+                    card.innerHTML = `
+                        <div class="block-header">
+                            <span class="block-num">BLOCK ${block.id}</span>
+                            <span class="block-instruction">${block.instruction}</span>
+                        </div>
+                        <div class="block-body">
+                            <div class="code-done">${escapeHtml(block.code)}</div>
+                            <div class="success-row">✓ Correct</div>
+                        </div>`;
+                } else if (active) {
+                    card.innerHTML = `
+                        <div class="block-header">
+                            <span class="block-num">BLOCK ${block.id}</span>
+                            <span class="block-instruction">${block.instruction}</span>
+                        </div>
+                        <div class="block-body">
+                            <textarea class="code-area" id="textarea-${block.id}" placeholder="Write the code here..." spellcheck="false"></textarea>
+                            <div class="hint-box" id="hint-box-${block.id}" style="display:none;"></div>
+                            <div class="error-row" id="error-row-${block.id}" style="display:none;">Not quite — try again.</div>
+                            <div class="block-actions">
+                                <button class="check-btn" id="check-btn-${block.id}">Check</button>
+                                <button class="hint-btn" id="hint-btn-${block.id}">Hint</button>
+                            </div>
+                        </div>`;
+
+                    setTimeout(() => {
+                        const textarea = document.getElementById(`textarea-${block.id}`);
+                        const checkBtn = document.getElementById(`check-btn-${block.id}`);
+                        const hintBtn = document.getElementById(`hint-btn-${block.id}`);
+
+                        checkBtn.addEventListener('click', () => {
+                            vscode.postMessage({ type: 'check', blockId: block.id, userInput: textarea.value });
+                        });
+
+                        textarea.addEventListener('keydown', (e) => {
+                            if (e.key === 'Enter' && e.ctrlKey) {
+                                vscode.postMessage({ type: 'check', blockId: block.id, userInput: textarea.value });
+                            }
+                        });
+
+                        hintBtn.addEventListener('click', () => {
+                            vscode.postMessage({ type: 'hint', blockId: block.id });
+                        });
+
+                        textarea.focus();
+                    }, 50);
+                } else {
+                    card.classList.add('locked-block');
+                    card.innerHTML = `
+                        <div class="block-header">
+                            <span class="block-num">BLOCK ${block.id}</span>
+                            <span class="block-instruction">${block.instruction}</span>
+                        </div>
+                        <div class="block-body">
+                            <textarea class="code-area" placeholder="Complete the previous block first..." disabled></textarea>
+                        </div>`;
+                }
+
+                practiceScroll.appendChild(card);
+            });
+        }
+
+        // ── Message handler ───────────────────────────────────────
+        window.addEventListener('message', (event) => {
+            const msg = event.data;
+
+            switch (msg.type) {
+                case 'fileOverview':
+                    overviewLoaded = true;
+                    renderFileOverview(msg.overview);
+                    if (currentMode === 'overview') showOverview();
+                    break;
+
+                case 'init':
+                    renderFnList(msg.functions, msg.activeIndex);
+                    activeIndex = msg.activeIndex;
+                    topbarLabel.textContent = 'File Overview';
+                    expFnName.textContent = '';
+                    expBody.textContent = '';
+                    expTags.innerHTML = '';
+                    callInfo.textContent = '';
+                    showOverview();
+                    break;
+
+                case 'loading':
+                    activeIndex = msg.activeIndex;
+                    currentMode = 'function';
+                    overviewTab.classList.remove('active');
+                    topbarLabel.textContent = msg.functionName;
+                    doneBtn.style.display = 'inline-flex';
+                    showOnly(loadingState);
+                    break;
+
+                case 'explanation': {
+                    const e = msg.explanation;
+                    topbarLabel.textContent = e.functionName;
+                    expFnName.textContent = e.functionName;
+                    expFnSig.textContent = '';
+                    expBody.textContent = e.explanation;
+                    expTags.innerHTML = (e.concepts || []).map(c => `<span class="tag">${c}</span>`).join('');
+                    callInfo.textContent = e.callInfo || '';
+                    showOnly(expContent);
+                    showFunction();
+                    break;
+                }
+
+                case 'generatingPractice':
+                    showOnly(generatingState);
+                    break;
+
+                case 'switchToPractice':
+                    switchTab('practice');
+                    break;
+
+                case 'initPractice':
+                    blocks = msg.blocks;
+                    completedIds = new Set();
+                    activeBlockId = blocks[0]?.id ?? null;
+                    psFnName.textContent = msg.functionName;
+                    practiceFunctionName = msg.functionName;
+                    renderPracticeBlocks();
+                    renderPracticeSidebar();
+                    if (currentTab === 'explain') {
+                        tabPractice.classList.add('ready');
+                    } else {
+                        switchTab('practice');
+                    }
+                    break;
+
+                case 'checkResult':
+                    if (msg.correct) {
+                        completedIds.add(msg.blockId);
+                        if (msg.next !== null && msg.next !== undefined) {
+                            activeBlockId = msg.next;
+                        }
+                        renderPracticeBlocks();
+                        renderPracticeSidebar();
+                        if (msg.next) {
+                            setTimeout(() => {
+                                const el = document.getElementById(`block-${msg.next}`);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }, 100);
+                        } else {
+                            vscode.postMessage({ type: 'complete' });
+                        }
+                    } else {
+                        const errorRow = document.getElementById(`error-row-${msg.blockId}`);
+                        if (errorRow) {
+                            errorRow.textContent = msg.reason ?? 'Not quite — try again.';
+                            errorRow.style.display = 'flex';
+                            setTimeout(() => { errorRow.style.display = 'none'; }, 3000);
+                        }
+                    }
+                    break;
+
+                case 'hint': {
+                    const hintBox = document.getElementById(`hint-box-${msg.blockId}`);
+                    const hintBtn = document.getElementById(`hint-btn-${msg.blockId}`);
+                    if (hintBox) {
+                        hintBox.textContent = msg.text;
+                        hintBox.style.display = 'block';
+                    }
+                    if (hintBtn && msg.hintsUsed >= msg.maxHints) {
+                        hintBtn.disabled = true;
+                        hintBtn.textContent = 'No more hints';
+                    }
+                    break;
+                }
+
+                case 'error':
+                    errorText.textContent = msg.message;
+                    showOnly(errorState);
+                    break;
+
+                case 'chatReply':
+                    appendChat(msg.text, 'ai');
+                    break;
+
+                case 'doneComplete':
+                    showOnly(expContent);
+                    break;
+            }
+        });
+
+        // ── Chat ─────────────────────────────────────────────────
+        function sendChat() {
+            const text = chatInput.value.trim();
+            if (!text) return;
+            appendChat(text, 'user');
+            chatInput.value = '';
+            vscode.postMessage({ type: 'chat', text, mode: currentMode });
+        }
+        sendBtn.addEventListener('click', sendChat);
+        chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
+
+        // ── Done / Practice start ──────────────────────────────
+        doneBtn.addEventListener('click', () => {
+            vscode.postMessage({ type: 'done' });
+        });
+
+        // ── Configure API Keys ──────────────────────────────────
+        configBtn.addEventListener('click', () => {
+            vscode.postMessage({ type: 'configure' });
+        });
+
+        // ── Utils ───────────────────────────────────────────────
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+        function truncate(str, max) {
+            return str.length > max ? str.slice(0, max) + '…' : str;
+        }
+    </script>
+
+</body>
+
+</html>
