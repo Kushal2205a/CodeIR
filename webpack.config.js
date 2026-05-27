@@ -25,7 +25,8 @@ const extensionConfig = {
     'tree-sitter-typescript': 'commonjs tree-sitter-typescript',
     'tree-sitter-javascript': 'commonjs tree-sitter-javascript',
     'tree-sitter-go': 'commonjs tree-sitter-go',
-    'tree-sitter-python': 'commonjs tree-sitter-python', // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
+    'tree-sitter-python': 'commonjs tree-sitter-python',
+    'tree-sitter-cpp': 'commonjs tree-sitter-cpp', // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
     // modules added here also need to be added in the .vscodeignore file
   },
   resolve: {
