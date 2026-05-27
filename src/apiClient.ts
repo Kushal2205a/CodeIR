@@ -39,23 +39,57 @@ function getConfig() {
     const cfg = vscode.workspace.getConfiguration('learntovibe');
     return {
         provider: cfg.get<string>('apiProvider') ?? 'nvidia',
-        nvidiaApiKey: cfg.get<string>('nvidiaApiKey') ?? '',
-        ollamaBaseUrl: cfg.get<string>('ollamaBaseUrl') ?? 'http://localhost:11434',
-        ollamaModel: cfg.get<string>('ollamaModel') ?? 'llama3',
+        nvidiaModel: cfg.get<string>('nvidia.model') ?? 'moonshotai/kimi-k2.6',
+        openaiModel: cfg.get<string>('openai.model') ?? 'gpt-4o',
+        anthropicModel: cfg.get<string>('anthropic.model') ?? 'claude-sonnet-4-20250514',
+        ollamaBaseUrl: cfg.get<string>('ollama.baseUrl') ?? 'http://localhost:11434',
+        ollamaModel: cfg.get<string>('ollama.model') ?? 'llama3.1',
     };
 }
 
+// ── SecretStorage helpers ─────────────────────────────────
+
+let _secretStorage: vscode.SecretStorage | undefined;
+
+export function initSecretStorage(secrets: vscode.SecretStorage) {
+    _secretStorage = secrets;
+}
+
+async function getApiKey(provider: 'nvidia' | 'openai' | 'anthropic'): Promise<string | undefined> {
+    // 1. Try SecretStorage first (secure)
+    if (_secretStorage) {
+        const key = await _secretStorage.get(`${provider}-apiKey`);
+        if (key) return key;
+    }
+    // 2. Fall back to old settings for backward compatibility
+    const cfg = vscode.workspace.getConfiguration('learntovibe');
+    const oldKey = cfg.get<string>(`${provider}.apiKey`);
+    if (oldKey) return oldKey;
+    return undefined;
+}
+
+export async function setApiKey(provider: 'nvidia' | 'openai' | 'anthropic', key: string): Promise<void> {
+    if (!_secretStorage) throw new Error('SecretStorage not initialized');
+    await _secretStorage.store(`${provider}-apiKey`, key);
+}
+
+export async function clearApiKey(provider: 'nvidia' | 'openai' | 'anthropic'): Promise<void> {
+    if (!_secretStorage) throw new Error('SecretStorage not initialized');
+    await _secretStorage.delete(`${provider}-apiKey`);
+}
+
 async function callNvidia(prompt: string, maxTokens: number): Promise<string> {
-    const { nvidiaApiKey } = getConfig();
+    const { nvidiaModel } = getConfig();
+    const nvidiaApiKey = await getApiKey('nvidia');
 
     if (!nvidiaApiKey) {
-        throw new Error('NVIDIA API key not set. Go to Settings and set learntovibe.nvidiaApiKey.');
+        throw new Error('NVIDIA API key not set. Run "LearnToVibe: Set API Key" to configure it.');
     }
 
     const response = await axios.post(
         'https://integrate.api.nvidia.com/v1/chat/completions',
         {
-            model: 'moonshotai/kimi-k2.6',
+            model: nvidiaModel,
             messages: [{ role: 'user', content: prompt }],
             max_tokens: maxTokens,
             temperature: 0.7,
@@ -74,8 +108,65 @@ async function callNvidia(prompt: string, maxTokens: number): Promise<string> {
 
     console.log(response);
 
-    const raw = response.data.choices?.[0]?.message?.content ?? '';
-    return raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+const raw = response.data.choices?.[0]?.message?.content ?? '';
+    return raw.replace(/ thinking[\s\S]*?<\/think>/g, '').trim();
+}
+
+async function callOpenAI(prompt: string, maxTokens: number): Promise<string> {
+    const { openaiModel } = getConfig();
+    const openaiApiKey = await getApiKey('openai');
+
+    if (!openaiApiKey) {
+        throw new Error('OpenAI API key not set. Run "LearnToVibe: Set API Key" to configure it.');
+    }
+
+    const response = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+            model: openaiModel,
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: maxTokens,
+            temperature: 0.7,
+        },
+        {
+            headers: {
+                'Authorization': `Bearer ${openaiApiKey}`,
+                'Content-Type': 'application/json',
+            },
+            timeout: 180000,
+        }
+    );
+
+    return response.data.choices?.[0]?.message?.content ?? '';
+}
+
+async function callAnthropic(prompt: string, maxTokens: number): Promise<string> {
+    const { anthropicModel } = getConfig();
+    const anthropicApiKey = await getApiKey('anthropic');
+
+    if (!anthropicApiKey) {
+        throw new Error('Anthropic API key not set. Run "LearnToVibe: Set API Key" to configure it.');
+    }
+
+    const response = await axios.post(
+        'https://api.anthropic.com/v1/messages',
+        {
+            model: anthropicModel,
+            max_tokens: maxTokens,
+            temperature: 0.7,
+            messages: [{ role: 'user', content: prompt }],
+        },
+        {
+            headers: {
+                'x-api-key': anthropicApiKey,
+                'anthropic-version': '2023-06-01',
+                'Content-Type': 'application/json',
+            },
+            timeout: 180000,
+        }
+    );
+
+    return response.data.content?.[0]?.text ?? '';
 }
 
 async function callOllama(prompt: string, maxTokens: number): Promise<string> {
@@ -127,8 +218,10 @@ export async function callLLM(prompt: string, maxTokens: number = 2048): Promise
     const { provider } = getConfig();
 
     switch (provider) {
-        case 'ollama': return callOllama(prompt, maxTokens);
         case 'nvidia': return callNvidia(prompt, maxTokens);
+        case 'openai': return callOpenAI(prompt, maxTokens);
+        case 'anthropic': return callAnthropic(prompt, maxTokens);
+        case 'ollama': return callOllama(prompt, maxTokens);
         default: throw new Error(`Unknown provider: ${provider}`);
     }
 }
