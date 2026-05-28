@@ -300,9 +300,6 @@
             topbarLabel.textContent = 'File Overview';
             doneBtn.style.display = 'none';
             updateChatContext();
-            if (!overviewLoaded) {
-                vscode.postMessage({ type: 'loadOverview' });
-            }
         }
         function showFunction() {
             currentMode = 'function';
@@ -311,7 +308,10 @@
             doneBtn.style.display = 'inline-flex';
             updateChatContext();
         }
-        overviewTab.addEventListener('click', () => showOverview());
+        overviewTab.addEventListener('click', () => {
+            showOverview();
+            vscode.postMessage({ type: 'loadOverview' });
+        });
         document.getElementById('retry-btn').addEventListener('click', () => {
             vscode.postMessage({ type: 'selectFunction', index: activeIndex });
         });
@@ -424,6 +424,10 @@
                     break;
 
                 case 'init':
+                    overviewLoaded = false;
+                    overviewSummary.textContent = '';
+                    overviewResponsibilities.innerHTML = '';
+                    overviewPatterns.innerHTML = '';
                     renderFnList(msg.functions, msg.activeIndex);
                     activeIndex = msg.activeIndex;
                     topbarLabel.textContent = 'File Overview';
@@ -453,6 +457,9 @@
                     callInfo.textContent = e.callInfo || '';
                     showOnly(expContent);
                     showFunction();
+                    if (!overviewLoaded) {
+                        vscode.postMessage({ type: 'loadOverview' });
+                    }
                     break;
                 }
 

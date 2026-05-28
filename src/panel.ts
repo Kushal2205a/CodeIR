@@ -215,15 +215,15 @@ export class LearnPanel {
                 overview: result,
             });
         } catch {
-            this._fileOverview = {
-                summary: 'Could not generate file overview.',
-                responsibilities: [],
-                patterns: [],
-            };
+            this._fileOverview = null;
 
             this._panel.webview.postMessage({
                 type: 'fileOverview',
-                overview: this._fileOverview,
+                overview: {
+                    summary: 'Could not generate file overview.',
+                    responsibilities: [],
+                    patterns: [],
+                },
             });
         }
     }
@@ -291,6 +291,11 @@ Answer clearly and concisely in plain text, no JSON.
             case 'loadOverview': {
                 if (!this._fileOverview) {
                     await this._loadFileOverview();
+                } else {
+                    this._panel.webview.postMessage({
+                        type: 'fileOverview',
+                        overview: this._fileOverview,
+                    });
                 }
                 break;
             }
@@ -437,19 +442,14 @@ Answer clearly and concisely in plain text, no JSON.
         this._functions = functions;
         this._activeIndex = 0;
         this._currentRequest = 0;
+        this._fileOverview = null;
+        this._explanations.clear();
 
         this._panel.webview.postMessage({
             type: 'init',
             functions: this._functions.map(f => ({ name: f.name, nodeType: f.nodeType })),
             activeIndex: 0,
         });
-
-        if (this._fileOverview) {
-            this._panel.webview.postMessage({
-                type: 'fileOverview',
-                overview: this._fileOverview,
-            });
-        }
     }
 
     private _getHtml(): string {
