@@ -1,13 +1,21 @@
 import * as vscode from 'vscode';
 import { parseDocument, parseFunctionAtCursor, isSupported } from './parser/index';
 import { LearnPanel } from './panel';
-import { generatePracticeBlocks, initSecretStorage, setApiKey, clearApiKey } from './apiClient';
+import {
+	diagnoseNvidia,
+	initNvidiaDiagnosticsOutput,
+	initSecretStorage,
+	setApiKey,
+	clearApiKey,
+} from './apiClient';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const extensionPath = context.extensionPath;
 
 	// Initialize SecretStorage for API keys
 	initSecretStorage(context.secrets);
+	const nvidiaDiagnosticsOutput = vscode.window.createOutputChannel('LearnToVibe NVIDIA Diagnostic');
+	initNvidiaDiagnosticsOutput(nvidiaDiagnosticsOutput);
 
 	// set supported languages as context for when clauses in package.json
 	vscode.commands.executeCommand(
@@ -183,13 +191,39 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 	);
 
+	const diagnoseNvidiaCommand = vscode.commands.registerCommand(
+		'learntovibe.diagnoseNvidia',
+		async () => {
+			const ok = await vscode.window.withProgress(
+				{
+					location: vscode.ProgressLocation.Notification,
+					title: 'LearnToVibe: diagnosing NVIDIA connection...',
+					cancellable: false,
+				},
+				() => diagnoseNvidia(nvidiaDiagnosticsOutput)
+			);
+
+			if (ok) {
+				vscode.window.showInformationMessage(
+					'LearnToVibe: NVIDIA diagnostic succeeded. See the output channel for details.'
+				);
+			} else {
+				vscode.window.showWarningMessage(
+					'LearnToVibe: NVIDIA diagnostic failed. See the output channel for details.'
+				);
+			}
+		}
+	);
+
 	context.subscriptions.push(
 		learnCommand,
 		practiceCommand,
 		codeLensProvider,
 		settingsWatcher,
 		setApiKeyCommand,
-		clearApiKeyCommand
+		clearApiKeyCommand,
+		diagnoseNvidiaCommand,
+		nvidiaDiagnosticsOutput
 	);
 }
 

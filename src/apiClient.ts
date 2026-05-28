@@ -2,6 +2,11 @@ import axios from 'axios';
 import * as vscode from 'vscode';
 import { FunctionNode } from './parser/extract';
 
+const NVIDIA_CHAT_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+const NVIDIA_PRIMARY_TIMEOUT_MS = 75000;
+const NVIDIA_FALLBACK_TIMEOUT_MS = 75000;
+const NVIDIA_FALLBACK_MODEL = 'nvidia/llama-3.1-nemotron-nano-8b-v1';
+
 export interface ExplanationResult {
     functionName: string;
     explanation: string;
@@ -39,7 +44,7 @@ function getConfig() {
     const cfg = vscode.workspace.getConfiguration('learntovibe');
     return {
         provider: cfg.get<string>('apiProvider') ?? 'nvidia',
-        nvidiaModel: cfg.get<string>('nvidia.model') ?? 'moonshotai/kimi-k2.6',
+        nvidiaModel: cfg.get<string>('nvidia.model') ?? NVIDIA_FALLBACK_MODEL,
         openaiModel: cfg.get<string>('openai.model') ?? 'gpt-4o',
         anthropicModel: cfg.get<string>('anthropic.model') ?? 'claude-sonnet-4-20250514',
         ollamaBaseUrl: cfg.get<string>('ollama.baseUrl') ?? 'http://localhost:11434',
@@ -50,9 +55,14 @@ function getConfig() {
 // ── SecretStorage helpers ─────────────────────────────────
 
 let _secretStorage: vscode.SecretStorage | undefined;
+let _nvidiaOutput: vscode.OutputChannel | undefined;
 
 export function initSecretStorage(secrets: vscode.SecretStorage) {
     _secretStorage = secrets;
+}
+
+export function initNvidiaDiagnosticsOutput(output: vscode.OutputChannel) {
+    _nvidiaOutput = output;
 }
 
 async function getApiKey(provider: 'nvidia' | 'openai' | 'anthropic'): Promise<string | undefined> {
@@ -63,7 +73,8 @@ async function getApiKey(provider: 'nvidia' | 'openai' | 'anthropic'): Promise<s
     }
     // 2. Fall back to old settings for backward compatibility
     const cfg = vscode.workspace.getConfiguration('learntovibe');
-    const oldKey = cfg.get<string>(`${provider}.apiKey`);
+    const oldKey = cfg.get<string>(`${provider}.apiKey`)
+        ?? (provider === 'nvidia' ? cfg.get<string>('nvidiaApiKey') : undefined);
     if (oldKey) return oldKey;
     return undefined;
 }
@@ -78,7 +89,147 @@ export async function clearApiKey(provider: 'nvidia' | 'openai' | 'anthropic'): 
     await _secretStorage.delete(`${provider}-apiKey`);
 }
 
-async function callNvidia(prompt: string, maxTokens: number): Promise<string> {
+function previewJson(value: unknown, maxLength: number = 1200): string {
+    const text = typeof value === 'string'
+        ? value
+        : JSON.stringify(value, null, 2);
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function logAxiosError(output: vscode.OutputChannel, err: unknown): void {
+    if (!axios.isAxiosError(err)) {
+        output.appendLine(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+    }
+
+    output.appendLine(`Axios error message: ${err.message}`);
+    output.appendLine(`Axios error code: ${err.code ?? 'none'}`);
+
+    if (err.response) {
+        output.appendLine(`HTTP status: ${err.response.status}`);
+        output.appendLine(`Response headers: ${previewJson(err.response.headers, 1600)}`);
+        output.appendLine(`Response body preview: ${previewJson(err.response.data, 2000)}`);
+        return;
+    }
+
+    if (err.request) {
+        output.appendLine('Request was sent, but no response was received before failure.');
+        return;
+    }
+
+    output.appendLine('Request failed before it was sent.');
+}
+
+function logNvidia(message: string): void {
+    _nvidiaOutput?.appendLine(message);
+}
+
+export async function diagnoseNvidia(output: vscode.OutputChannel): Promise<boolean> {
+    const { provider, nvidiaModel } = getConfig();
+    const nvidiaApiKey = await getApiKey('nvidia');
+    const prompt = 'Reply with {"ok":true} only.';
+    const timeoutMs = 200000;
+    const payload = {
+        model: nvidiaModel,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 64,
+        temperature: 0,
+        stream: false,
+        chat_template_kwargs: { thinking: false },
+    };
+
+    output.clear();
+    output.show(true);
+    output.appendLine('LearnToVibe NVIDIA Diagnostic');
+    output.appendLine(`Started: ${new Date().toISOString()}`);
+    output.appendLine(`Resolved provider: ${provider}`);
+    output.appendLine(`Resolved NVIDIA model: ${nvidiaModel}`);
+    output.appendLine(`NVIDIA key found: ${nvidiaApiKey ? 'yes' : 'no'}`);
+    output.appendLine(`Prompt length: ${prompt.length}`);
+    output.appendLine(`Max tokens: ${payload.max_tokens}`);
+    output.appendLine(`Timeout ms: ${timeoutMs}`);
+    output.appendLine(`Payload summary: ${previewJson({
+        ...payload,
+        messages: [{ role: 'user', contentLength: prompt.length }],
+    })}`);
+
+    if (!nvidiaApiKey) {
+        output.appendLine('Result: failed before request. NVIDIA API key was not found.');
+        return false;
+    }
+
+    const startedAt = Date.now();
+    output.appendLine(`Request start: ${new Date(startedAt).toISOString()}`);
+
+    try {
+        const response = await axios.post(
+            NVIDIA_CHAT_URL,
+            payload,
+            {
+                headers: {
+                    'Authorization': `Bearer ${nvidiaApiKey}`,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                timeout: timeoutMs,
+                validateStatus: status => status >= 200 && status < 300,
+            }
+        );
+
+        const elapsedMs = Date.now() - startedAt;
+        output.appendLine(`Elapsed ms: ${elapsedMs}`);
+        output.appendLine(`HTTP status: ${response.status}`);
+        output.appendLine(`Response body preview: ${previewJson(response.data, 2000)}`);
+        output.appendLine('Result: success. The tiny NVIDIA diagnostic request completed.');
+        return true;
+    } catch (err) {
+        const elapsedMs = Date.now() - startedAt;
+        output.appendLine(`Elapsed ms: ${elapsedMs}`);
+        logAxiosError(output, err);
+        output.appendLine('Result: failed. Use the status/error details above to identify the failing layer.');
+        return false;
+    }
+}
+
+function shouldTryNvidiaFallback(err: unknown): boolean {
+    if (!axios.isAxiosError(err)) return false;
+    const status = err.response?.status;
+    return err.code === 'ECONNABORTED' || status === 404 || status === 429 || (status !== undefined && status >= 500);
+}
+
+async function postNvidiaChat(
+    model: string,
+    prompt: string,
+    maxTokens: number,
+    apiKey: string,
+    timeoutMs: number,
+    signal?: AbortSignal
+) {
+    return axios.post(
+        NVIDIA_CHAT_URL,
+        {
+            model,
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: maxTokens,
+            temperature: 0.7,
+            top_p: 1.0,
+            stream: false,
+            chat_template_kwargs: { thinking: false },
+        },
+        {
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+            },
+            signal,
+            timeout: timeoutMs,
+            validateStatus: status => status >= 200 && status < 300,
+        }
+    );
+}
+
+async function callNvidia(prompt: string, maxTokens: number, signal?: AbortSignal): Promise<string> {
     const { nvidiaModel } = getConfig();
     const nvidiaApiKey = await getApiKey('nvidia');
 
@@ -86,33 +237,99 @@ async function callNvidia(prompt: string, maxTokens: number): Promise<string> {
         throw new Error('NVIDIA API key not set. Run "LearnToVibe: Set API Key" to configure it.');
     }
 
-    const response = await axios.post(
-        'https://integrate.api.nvidia.com/v1/chat/completions',
-        {
-            model: nvidiaModel,
-            messages: [{ role: 'user', content: prompt }],
-            max_tokens: 16384,
-            temperature: 1.0,
-            top_p: 1.0,
-            stream: false,
-            chat_template_kwargs: { thinking: true },
-        },
-        {
-            headers: {
-                'Authorization': `Bearer ${nvidiaApiKey}`,
-                'Accept': 'application/json',
-            },
-            timeout: 200000,
+    const startedAt = Date.now();
+    logNvidia('');
+    logNvidia('NVIDIA normal request');
+    logNvidia(`Started: ${new Date(startedAt).toISOString()}`);
+    logNvidia(`Model: ${nvidiaModel}`);
+    logNvidia(`Prompt length: ${prompt.length}`);
+    logNvidia(`Max tokens: ${maxTokens}`);
+    logNvidia(`Primary timeout ms: ${NVIDIA_PRIMARY_TIMEOUT_MS}`);
+
+    try {
+        let modelUsed = nvidiaModel;
+        let response;
+
+        try {
+            response = await postNvidiaChat(
+                nvidiaModel,
+                prompt,
+                maxTokens,
+                nvidiaApiKey,
+                NVIDIA_PRIMARY_TIMEOUT_MS,
+                signal
+            );
+        } catch (err) {
+            if (nvidiaModel === NVIDIA_FALLBACK_MODEL || !shouldTryNvidiaFallback(err)) {
+                throw err;
+            }
+
+            logNvidia(`Primary model failed after ${Date.now() - startedAt} ms.`);
+            if (_nvidiaOutput) {
+                logAxiosError(_nvidiaOutput, err);
+            }
+            logNvidia(`Retrying with fallback model: ${NVIDIA_FALLBACK_MODEL}`);
+            logNvidia(`Fallback timeout ms: ${NVIDIA_FALLBACK_TIMEOUT_MS}`);
+
+            modelUsed = NVIDIA_FALLBACK_MODEL;
+            response = await postNvidiaChat(
+                NVIDIA_FALLBACK_MODEL,
+                prompt,
+                maxTokens,
+                nvidiaApiKey,
+                NVIDIA_FALLBACK_TIMEOUT_MS,
+                signal
+            );
         }
-    );
 
-    console.log(response);
+        const elapsedMs = Date.now() - startedAt;
+        logNvidia(`Elapsed ms: ${elapsedMs}`);
+        logNvidia(`Model used: ${modelUsed}`);
+        logNvidia(`HTTP status: ${response.status}`);
 
-const raw = response.data.choices?.[0]?.message?.content ?? '';
-    return raw.replace(/ thinking[\s\S]*?<\/think>/g, '').trim();
+        const raw = response.data.choices?.[0]?.message?.content ?? '';
+        if (!raw) {
+            throw new Error(`NVIDIA returned an empty response for model ${modelUsed}.`);
+        }
+        logNvidia(`Response chars: ${raw.length}`);
+        return raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    } catch (err: any) {
+        const elapsedMs = Date.now() - startedAt;
+        logNvidia(`Elapsed ms: ${elapsedMs}`);
+        if (_nvidiaOutput) {
+            logAxiosError(_nvidiaOutput, err);
+        }
+        throw new Error(formatNvidiaError(err, nvidiaModel));
+    }
 }
 
-async function callOpenAI(prompt: string, maxTokens: number): Promise<string> {
+function formatNvidiaError(err: any, model: string): string {
+    if (err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
+        return 'NVIDIA request was cancelled.';
+    }
+
+    if (err?.code === 'ECONNABORTED') {
+        return `NVIDIA request timed out for model ${model}. The payload now uses bounded tokens with thinking disabled; if this persists, try a faster NVIDIA model or check provider availability.`;
+    }
+
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    const detail = typeof data === 'string'
+        ? data
+        : data?.detail ?? data?.message ?? data?.error?.message ?? JSON.stringify(data ?? {});
+
+    if (status === 404) {
+        return `NVIDIA returned 404 for model ${model}. The endpoint is correct, so this usually means the model is not enabled for your NVIDIA account/API key or the configured model ID is unavailable. Try a model listed in your NVIDIA account's /v1/models response. Details: ${detail}`;
+    }
+
+    if (status) {
+        return `NVIDIA request failed with HTTP ${status} for model ${model}: ${detail}`;
+    }
+
+    return `NVIDIA request failed for model ${model}: ${err?.message ?? 'unknown error'}`;
+}
+
+async function callOpenAI(prompt: string, maxTokens: number, signal?: AbortSignal): Promise<string> {
     const { openaiModel } = getConfig();
     const openaiApiKey = await getApiKey('openai');
 
@@ -133,6 +350,7 @@ async function callOpenAI(prompt: string, maxTokens: number): Promise<string> {
                 'Authorization': `Bearer ${openaiApiKey}`,
                 'Content-Type': 'application/json',
             },
+            signal,
             timeout: 180000,
         }
     );
@@ -140,7 +358,7 @@ async function callOpenAI(prompt: string, maxTokens: number): Promise<string> {
     return response.data.choices?.[0]?.message?.content ?? '';
 }
 
-async function callAnthropic(prompt: string, maxTokens: number): Promise<string> {
+async function callAnthropic(prompt: string, maxTokens: number, signal?: AbortSignal): Promise<string> {
     const { anthropicModel } = getConfig();
     const anthropicApiKey = await getApiKey('anthropic');
 
@@ -162,6 +380,7 @@ async function callAnthropic(prompt: string, maxTokens: number): Promise<string>
                 'anthropic-version': '2023-06-01',
                 'Content-Type': 'application/json',
             },
+            signal,
             timeout: 180000,
         }
     );
@@ -169,7 +388,7 @@ async function callAnthropic(prompt: string, maxTokens: number): Promise<string>
     return response.data.content?.[0]?.text ?? '';
 }
 
-async function callOllama(prompt: string, maxTokens: number): Promise<string> {
+async function callOllama(prompt: string, maxTokens: number, signal?: AbortSignal): Promise<string> {
     const { ollamaBaseUrl, ollamaModel } = getConfig();
 
     const payload = JSON.stringify({
@@ -191,15 +410,14 @@ async function callOllama(prompt: string, maxTokens: number): Promise<string> {
             url: `${ollamaBaseUrl}/api/chat`,
             data: payload,
             headers: { 'Content-Type': 'application/json' },
+            signal,
             timeout: 180000,        // ← Increased to 3 minutes
         });
 
         // ── NEW: Better response logging ─────────────────────
         const content = response.data.message?.content ?? '';
         console.log(`[Ollama] Raw response length: ${content.length} chars`);
-
         return content;
-
     } catch (err: any) {
         // ── NEW: Much better error diagnostics ───────────────
         console.error('[Ollama] ERROR:', err.message);
@@ -210,24 +428,24 @@ async function callOllama(prompt: string, maxTokens: number): Promise<string> {
         } else if (err.request) {
             console.error('No response received from Ollama. Is it running?');
         }
-
         throw new Error(`Ollama failed with model ${ollamaModel}: ${err.message}`);
     }
 }
-export async function callLLM(prompt: string, maxTokens: number = 2048): Promise<string> {
-    const { provider } = getConfig();
 
+export async function callLLM(prompt: string, maxTokens: number = 2048, signal?: AbortSignal): Promise<string> {
+    const { provider } = getConfig();
     switch (provider) {
-        case 'nvidia': return callNvidia(prompt, maxTokens);
-        case 'openai': return callOpenAI(prompt, maxTokens);
-        case 'anthropic': return callAnthropic(prompt, maxTokens);
-        case 'ollama': return callOllama(prompt, maxTokens);
+        case 'nvidia': return callNvidia(prompt, maxTokens, signal);
+        case 'openai': return callOpenAI(prompt, maxTokens, signal);
+        case 'anthropic': return callAnthropic(prompt, maxTokens, signal);
+        case 'ollama': return callOllama(prompt, maxTokens, signal);
         default: throw new Error(`Unknown provider: ${provider}`);
     }
 }
 
 export async function generateFileOverview(
-    functions: FunctionNode[]
+    functions: FunctionNode[],
+    signal?: AbortSignal
 ): Promise<FileOverviewResult> {
 
     const functionContext = functions
@@ -271,23 +489,23 @@ Analyze the file and respond with **valid JSON only** (no markdown, no extra tex
 
 Infer the file's purpose from function names and code structure.`;
 
-    const raw = await callLLM(prompt, 1024);
+    const raw = await callLLM(prompt, 512, signal);
     return parseFileOverview(raw);
 }
-export async function explainFunction(fn: FunctionNode): Promise<ExplanationResult> {
-    const raw = await callLLM(buildExplanationPrompt(fn), 2048);
+export async function explainFunction(fn: FunctionNode, signal?: AbortSignal): Promise<ExplanationResult> {
+    const raw = await callLLM(buildExplanationPrompt(fn), 512, signal);
     return parseExplanationResponse(raw, fn.name);
 }
 
-export async function generatePracticeBlocks(fn: FunctionNode): Promise<PracticeResult> {
+export async function generatePracticeBlocks(fn: FunctionNode, signal?: AbortSignal): Promise<PracticeResult> {
     console.log('Generating practice blocks...');
-    const raw = await callLLM(buildPracticePrompt(fn), 2048);
+    const raw = await callLLM(buildPracticePrompt(fn), 1536, signal);
     console.log('RAW RESPONSE:', raw);
     return parsePracticeResponse(raw, fn.name);
 }
 
 function buildExplanationPrompt(fn: FunctionNode): string {
-    return `You are a programming tutor. Explain the following function clearly and concisely for a student who is learning to code.
+    return `You are a programming tutor. Explain the following function for a student who is learning to code. Be concise — use 3-5 sentences max.
 
 Function name: ${fn.name}
 Signature: ${fn.signature}
@@ -295,17 +513,16 @@ Body:
 ${fn.body}
 
 Your task:
-1. Write a plain-English explanation of what this function does step by step, and why it is useful.
-2. List 2-4 key programming concepts demonstrated by this function.
-3. Describe where and how this function would typically be called in a real application.
+1. Write a concise plain-English explanation of what this function does and why it's useful.
+2. List 1-2 key programming concepts demonstrated.
 
 Output ONLY a raw JSON object — no markdown, no code fences, no extra text before or after.
 The JSON must use exactly these keys:
 
 {
   "explanation": "<your explanation here>",
-  "concepts": ["<concept A>", "<concept B>"],
-  "callInfo": "<your call-site description here>"
+  "concepts": ["<concept A>"],
+  "callInfo": ""
 }`;
 }
 

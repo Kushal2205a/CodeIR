@@ -47,7 +47,8 @@ export class LearnPanel {
     private _currentPractice: CachedPractice | null = null;
     private _isGeneratingPractice = false;
 
-    private _currentRequest = 0;
+    private _requestToken = crypto.randomUUID();
+    private _abortController: AbortController = new AbortController();
     private _disposables: vscode.Disposable[] = [];
 
     private constructor(
@@ -130,10 +131,14 @@ export class LearnPanel {
             return;
         }
 
+        this._abortController.abort();
+        this._abortController = new AbortController();
+        const signal = this._abortController.signal;
+
         this._panel.webview.postMessage({ type: 'generatingPractice' });
 
         try {
-            const practiceData = await generatePracticeBlocks(fn);
+            const practiceData = await generatePracticeBlocks(fn, signal);
 
             const blockStates = new Map<number, BlockState>();
             for (const block of practiceData.blocks) {
@@ -152,10 +157,12 @@ export class LearnPanel {
                 functionName: fn.name,
                 blocks: practiceData.blocks,
             });
-        } catch {
+        } catch (err: any) {
+            if (err?.message === 'NVIDIA request was cancelled.') return;
+
             this._panel.webview.postMessage({
                 type: 'error',
-                message: 'Failed to generate practice blocks.',
+                message: err?.message ?? 'Failed to generate practice blocks.',
             });
         }
     }
@@ -163,15 +170,16 @@ export class LearnPanel {
     // ── Private handlers ───────────────────────────────────
 
     private async _loadFunction(index: number): Promise<void> {
-        const requestId = ++this._currentRequest;
         const fn = this._functions[index];
         if (!fn) return;
 
+        const token = crypto.randomUUID();
+        this._requestToken = token;
         this._activeIndex = index;
 
         const cacheKey = `${fn.name}:${fn.startLine}:${fn.endLine}`;
         if (this._explanations.has(cacheKey)) {
-            if (requestId !== this._currentRequest) return;
+            if (token !== this._requestToken) return;
 
             this._panel.webview.postMessage({
                 type: 'explanation',
@@ -180,6 +188,10 @@ export class LearnPanel {
             return;
         }
 
+        this._abortController.abort();
+        this._abortController = new AbortController();
+        const signal = this._abortController.signal;
+
         this._panel.webview.postMessage({
             type: 'loading',
             functionName: fn.name,
@@ -187,9 +199,9 @@ export class LearnPanel {
         });
 
         try {
-            const result = await explainFunction(fn);
+            const result = await explainFunction(fn, signal);
 
-            if (requestId !== this._currentRequest) return;
+            if (token !== this._requestToken) return;
 
             this._explanations.set(cacheKey, result);
 
@@ -198,6 +210,9 @@ export class LearnPanel {
                 explanation: result,
             });
         } catch (err: any) {
+            if (token !== this._requestToken) return;
+            if (err?.message === 'NVIDIA request was cancelled.') return;
+
             this._panel.webview.postMessage({
                 type: 'error',
                 message: err?.message ?? 'Unknown error occurred.',
@@ -206,15 +221,21 @@ export class LearnPanel {
     }
 
     private async _loadFileOverview(): Promise<void> {
+        this._abortController.abort();
+        this._abortController = new AbortController();
+        const signal = this._abortController.signal;
+
         try {
-            const result = await generateFileOverview(this._functions);
+            const result = await generateFileOverview(this._functions, signal);
             this._fileOverview = result;
 
             this._panel.webview.postMessage({
                 type: 'fileOverview',
                 overview: result,
             });
-        } catch {
+        } catch (err: any) {
+            if (err?.message === 'NVIDIA request was cancelled.') return;
+
             this._fileOverview = null;
 
             this._panel.webview.postMessage({
@@ -229,6 +250,8 @@ export class LearnPanel {
     }
 
     private async _handleChat(messageText: string, mode: 'overview' | 'function'): Promise<void> {
+        const signal = this._abortController.signal;
+
         if (mode === 'overview') {
             const overview = this._fileOverview;
             const prompt = `
@@ -244,12 +267,12 @@ Answer clearly and concisely in plain text, no JSON.
   `.trim();
 
             try {
-                const reply = await callLLM(prompt, 512);
+                const reply = await callLLM(prompt, 512, signal);
                 this._panel.webview.postMessage({ type: 'chatReply', text: reply });
-            } catch {
+            } catch (err: any) {
                 this._panel.webview.postMessage({
                     type: 'chatReply',
-                    text: 'Something went wrong. Try again.',
+                    text: err?.message ?? 'Something went wrong. Try again.',
                 });
             }
         } else {
@@ -275,12 +298,12 @@ Answer clearly and concisely in plain text, no JSON.
   `.trim();
 
             try {
-                const reply = await callLLM(contextPrompt, 512);
+                const reply = await callLLM(contextPrompt, 512, signal);
                 this._panel.webview.postMessage({ type: 'chatReply', text: reply });
-            } catch {
+            } catch (err: any) {
                 this._panel.webview.postMessage({
                     type: 'chatReply',
-                    text: 'Something went wrong. Try again.',
+                    text: err?.message ?? 'Something went wrong. Try again.',
                 });
             }
         }
@@ -330,11 +353,11 @@ Answer clearly and concisely in plain text, no JSON.
                 try {
                     await this.startPractice(fn);
                     this._isGeneratingPractice = false;
-                } catch {
+                } catch (err: any) {
                     this._isGeneratingPractice = false;
                     this._panel.webview.postMessage({
                         type: 'error',
-                        message: 'Failed to generate practice blocks.',
+                        message: err?.message ?? 'Failed to generate practice blocks.',
                     });
                 }
                 break;
@@ -439,9 +462,11 @@ Answer clearly and concisely in plain text, no JSON.
     // ── Panel lifecycle ─────────────────────────────────────
 
     private async _update(functions: FunctionNode[]): Promise<void> {
+        this._abortController.abort();
+        this._abortController = new AbortController();
+        this._requestToken = crypto.randomUUID();
         this._functions = functions;
         this._activeIndex = 0;
-        this._currentRequest = 0;
         this._fileOverview = null;
         this._explanations.clear();
 

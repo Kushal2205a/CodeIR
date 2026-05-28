@@ -10,6 +10,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onCommand:learntovibe.diagnoseNvidia",
     "onLanguage:typescript",
     "onLanguage:typescriptreact",
     "onLanguage:javascript",
@@ -38,6 +39,11 @@
       {
         "command": "learntovibe.clearApiKey",
         "title": "Clear API Key",
+        "category": "LearnToVibe"
+      },
+      {
+        "command": "learntovibe.diagnoseNvidia",
+        "title": "Diagnose NVIDIA Connection",
         "category": "LearnToVibe"
       }
     ],
@@ -83,7 +89,7 @@
           "default": "nvidia",
           "markdownDescription": "Primary AI provider for explanations and practice generation. Choose **NVIDIA** (cloud, free tier), **OpenAI** (GPT-4o), **Anthropic** (Claude), or **Ollama** (local).",
           "enumDescriptions": [
-            "NVIDIA AI (cloud, default: Kimi K2.6)",
+            "NVIDIA AI (cloud, default: Nemotron Nano 8B)",
             "OpenAI (GPT-4o, GPT-4o-mini)",
             "Anthropic (Claude Sonnet)",
             "Ollama (local models via localhost)"
@@ -92,8 +98,8 @@
         },
         "learntovibe.nvidia.model": {
           "type": "string",
-          "default": "moonshotai/kimi-k2.6",
-          "markdownDescription": "NVIDIA model ID to use. Find models at [catalog.ngc.nvidia.com](https://catalog.ngc.nvidia.com).",
+          "default": "nvidia/llama-3.1-nemotron-nano-8b-v1",
+          "markdownDescription": "NVIDIA model ID to use. The default favors extension responsiveness; larger models like `moonshotai/kimi-k2.6` may be much slower or intermittent.",
           "order": 2
         },
         "learntovibe.openai.model": {
