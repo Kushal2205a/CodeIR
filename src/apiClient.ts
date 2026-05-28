@@ -91,18 +91,18 @@ async function callNvidia(prompt: string, maxTokens: number): Promise<string> {
         {
             model: nvidiaModel,
             messages: [{ role: 'user', content: prompt }],
-            max_tokens: maxTokens,
-            temperature: 0.7,
+            max_tokens: 16384,
+            temperature: 1.0,
             top_p: 1.0,
             stream: false,
-            chat_template_kwargs: { thinking: false },
+            chat_template_kwargs: { thinking: true },
         },
         {
             headers: {
                 'Authorization': `Bearer ${nvidiaApiKey}`,
                 'Accept': 'application/json',
             },
-            timeout: 200000, // 60 s — prevents indefinite hangs
+            timeout: 200000,
         }
     );
 
