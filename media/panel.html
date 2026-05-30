@@ -263,7 +263,7 @@
         function appendChat(text, role) {
             const div = document.createElement('div');
             div.className = `chat-msg ${role}`;
-            div.textContent = text;
+            div.innerHTML = renderMarkdown(text);
             chatMessages.appendChild(div);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
@@ -285,7 +285,7 @@
         }
         function renderFileOverview(overview) {
             overviewLoading.style.display = 'none';
-            overviewSummary.textContent = overview.summary;
+            overviewSummary.innerHTML = renderMarkdown(overview.summary);
             overviewResponsibilities.innerHTML = overview.responsibilities.map(r => `<li>${r}</li>`).join('');
             overviewPatterns.innerHTML = overview.patterns.map(p => `<span class="tag">${p}</span>`).join('');
         }
@@ -452,7 +452,7 @@
                     topbarLabel.textContent = e.functionName;
                     expFnName.textContent = e.functionName;
                     expFnSig.textContent = '';
-                    expBody.textContent = e.explanation;
+                    expBody.innerHTML = renderMarkdown(e.explanation);
                     expTags.innerHTML = (e.concepts || []).map(c => `<span class="tag">${c}</span>`).join('');
                     callInfo.textContent = e.callInfo || '';
                     showOnly(expContent);
@@ -561,6 +561,41 @@
         configBtn.addEventListener('click', () => {
             vscode.postMessage({ type: 'configure' });
         });
+
+        // ── Markdown rendering ──────────────────────────────────
+        function renderMarkdown(text) {
+            if (!text) return '';
+            let html = escapeHtml(text);
+            // 1. code blocks (```...```) — protect content first
+            html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+                `<pre class="md-code-block"><code>${code.trim()}</code></pre>`);
+            // 2. inline code (`...`) — protect from further processing
+            html = html.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
+            // 3. section headers: **text:** (LLM outputs these for headers)
+            html = html.replace(/\*\*(.+?):\*\*/g, (_, c) => `<h3>${c.trim()}</h3>`);
+            // 4. bold+italic (**_..._**) — must come before bold/italic separately
+            html = html.replace(/\*\*_(.+?)_\*\*/g, '<strong><em>$1</em></strong>');
+            // 5. bold (**...**)
+            html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            // 6. italic (*...*)
+            html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+            // 7. markdown headers
+            html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+            html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+            html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+            // 8. unordered lists (- item)
+            html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+            html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+            // 9. line breaks → paragraphs
+            html = html.replace(/\n\n+/g, '</p><p>');
+            html = html.replace(/\n/g, '<br>');
+            html = '<p>' + html + '</p>';
+            html = html.replace(/<p>\s*<\/p>/g, '');
+            // 10. unwrap <p> around block elements
+            html = html.replace(/<p>\s*<(h[2-4]|pre|ul|ol)/g, '<$1');
+            html = html.replace(/(<\/(h[2-4]|pre|ul|ol)>)\s*<\/p>/g, '$1');
+            return html;
+        }
 
         // ── Utils ───────────────────────────────────────────────
         function escapeHtml(str) {

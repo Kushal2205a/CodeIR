@@ -493,7 +493,7 @@ Infer the file's purpose from function names and code structure.`;
     return parseFileOverview(raw);
 }
 export async function explainFunction(fn: FunctionNode, signal?: AbortSignal): Promise<ExplanationResult> {
-    const raw = await callLLM(buildExplanationPrompt(fn), 512, signal);
+    const raw = await callLLM(buildExplanationPrompt(fn), 1024, signal);
     return parseExplanationResponse(raw, fn.name);
 }
 
@@ -505,23 +505,39 @@ export async function generatePracticeBlocks(fn: FunctionNode, signal?: AbortSig
 }
 
 function buildExplanationPrompt(fn: FunctionNode): string {
-    return `You are a programming tutor. Explain the following function for a student who is learning to code. Be concise — use 3-5 sentences max.
+    return `You are a programming tutor. Analyze the following function and explain it so a student can instantly understand what it does.
 
 Function name: ${fn.name}
 Signature: ${fn.signature}
 Body:
 ${fn.body}
 
-Your task:
-1. Write a concise plain-English explanation of what this function does and why it's useful.
-2. List 1-2 key programming concepts demonstrated.
+Structure your explanation using these section headers (wrap each header in **double asterisks** with a colon):
 
-Output ONLY a raw JSON object — no markdown, no code fences, no extra text before or after.
+**Summary:**
+One sentence: what does this function do?
+
+**Key Variables:**
+For each important variable, explain what it holds and why it matters. Wrap variable names in backticks like \`variableName\`.
+
+**How It Works:**
+Walk through the logic step by step. For loops, explain what they iterate over and what each iteration does. For conditionals, explain what condition is checked and what happens in each branch. For function calls, briefly note what they return.
+
+**Why It Matters:**
+One sentence on when/why you'd use this function.
+
+Formatting rules:
+- **Section Title:** for section headers (double asterisks + colon)
+- **bold text** for emphasis
+- \`backticks\` for variable and function names
+- - dash at start of line for bullet lists
+
+Output ONLY a raw JSON object — no markdown fences, no extra text before or after.
 The JSON must use exactly these keys:
 
 {
-  "explanation": "<your explanation here>",
-  "concepts": ["<concept A>"],
+  "explanation": "<your explanation here, using the formatting rules above>",
+  "concepts": ["<concept A>", "<concept B>"],
   "callInfo": ""
 }`;
 }

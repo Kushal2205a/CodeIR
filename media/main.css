@@ -253,6 +253,85 @@ body {
   margin-bottom: 14px;
 }
 
+/* ── rendered markdown ───────────────────────────────── */
+.exp-body p,
+.chat-msg p,
+.overview-main-summary p {
+  margin-bottom: 10px;
+  line-height: 1.7;
+}
+
+.exp-body p:last-child,
+.chat-msg p:last-child {
+  margin-bottom: 0;
+}
+
+.exp-body strong,
+.chat-msg strong {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.exp-body em,
+.chat-msg em {
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Section headers */
+.exp-body h2, .exp-body h3, .exp-body h4,
+.chat-msg h2, .chat-msg h3, .chat-msg h4 {
+  font-weight: 600;
+  margin: 18px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-textLink-foreground);
+}
+
+.exp-body h2, .chat-msg h2 { font-size: 14px; }
+.exp-body h3, .chat-msg h3 { font-size: 13px; }
+.exp-body h4, .chat-msg h4 { font-size: 12px; }
+
+/* Code blocks */
+.md-code-block {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.5;
+}
+
+/* Inline code */
+.md-inline-code {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--vscode-textLink-foreground);
+}
+
+/* Lists */
+.exp-body ul, .chat-msg ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.exp-body li, .chat-msg li {
+  margin-bottom: 5px;
+  line-height: 1.6;
+}
+
+.exp-body li::marker, .chat-msg li::marker {
+  color: var(--vscode-descriptionForeground);
+}
+
 .exp-tags {
   display:       flex;
   gap:           6px;
