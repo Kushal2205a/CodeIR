@@ -1,7 +1,7 @@
 {
-  "name": "learntovibe",
-  "displayName": "learntovibe",
-  "description": "Learn and reconstruct code functions",
+  "name": "codeir",
+  "displayName": "CodeIR",
+  "description": "AST-powered code comprehension and interactive learning",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.120.0"
